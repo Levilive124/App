@@ -1,6 +1,6 @@
-import { BUILDINGS, CAT, MISSIONS, STATUS, VEHICLES, xpForLevel } from './data.js?v=g1';
+import { BUILDINGS, CAT, MISSIONS, STATUS, VEHICLES, xpForLevel } from './data.js?v=g2';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const SIM = 3;                 // game seconds per real second at speed 1×
 const SIREN = 0.72;            // driving time factor with blue lights
 const SAVE_KEY = 'ez.save.v1';
@@ -92,7 +92,7 @@ function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } cat
 setInterval(save, 4000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
 
-const UI = { view: { kind: 'list' }, tab: 'missions', sheet: 1, sel: new Set(), build: null, resetArm: false };
+const UI = { view: { kind: 'list' }, stack: [], tab: 'missions', sheet: 1, sel: new Set(), build: null, resetArm: false, confirm: null };
 const bById = (id) => S.buildings.find((b) => b.id === id);
 const vById = (id) => S.vehicles.find((v) => v.id === id);
 const mById = (id) => S.missions.find((m) => m.id === id);
@@ -193,7 +193,7 @@ function complete(m) {
   S.missions = S.missions.filter((x) => x !== m);
   floatText(`+${fmtMoney(reward)}`, m);
   toast(`${ms('check_circle')} <b>${esc(t.name)}</b> abgeschlossen · +${fmtMoney(reward)} Credits`);
-  if (UI.view.kind === 'mission' && UI.view.id === m.id) setView({ kind: 'list' });
+  if (UI.view.kind === 'mission' && UI.view.id === m.id) A.back();
   drawMissions(); renderSheet(); playSound('done');
 }
 function gainXp(n) {
@@ -348,17 +348,19 @@ function playSound(kind) {
 function renderHud() {
   const need = xpForLevel(S.level + 1), have = xpForLevel(S.level);
   const pct = Math.min(100, ((S.xp - have) / (need - have)) * 100);
-  $('hud').innerHTML = `
+  setHTML($('hud'), `
     <div class="glass hud-pill">${ms('payments')}<b>${fmtMoney(S.credits)}</b></div>
     <div class="glass hud-pill lvl">${ms('military_tech')}<b>Lvl ${S.level}</b><span class="bar"><i style="width:${pct}%"></i></span></div>
     <div class="spacer"></div>
     <button class="glass hud-btn" data-action="speed" aria-label="Geschwindigkeit"><b>${S.speed}×</b></button>
     <button class="glass hud-btn" data-action="pause" aria-label="Pause">${ms(S.paused ? 'play_arrow' : 'pause')}</button>
-    <button class="glass hud-btn" data-action="settings" aria-label="Einstellungen">${ms('settings')}</button>`;
+    <button class="glass hud-btn" data-action="settings" aria-label="Einstellungen">${ms('settings')}</button>`);
 }
 
-function setView(v) {
-  UI.view = v; if (v.kind !== 'mission') UI.sel.clear();
+function setView(v, { push = true } = {}) {
+  if (push && v.kind !== 'list' && UI.view.kind !== 'build' && UI.view.kind !== 'start' && !(UI.view.kind === v.kind && UI.view.id === v.id)) UI.stack.push(UI.view);
+  if (v.kind === 'list') UI.stack = [];
+  UI.view = v; UI.confirm = null; if (v.kind !== 'mission') UI.sel.clear();
   if (UI.sheet === 0) UI.sheet = 1;
   renderSheet(); placeSheet();
   if (v.kind === 'building') { const b = bById(v.id); b && flyTo(b); }
@@ -366,6 +368,7 @@ function setView(v) {
 }
 function openMission(id) {
   const m = mById(id); if (!m) return;
+  if (UI.view.kind === 'mission' && UI.view.id === id) return;
   UI.sel.clear(); suggest(m, true);
   setView({ kind: 'mission', id }); flyTo(m, Math.max(map.getZoom(), 14));
 }
@@ -373,6 +376,8 @@ function openMission(id) {
 function renderSheet() { renderHeader(); renderBody(); }
 let lastTouch = 0;
 document.addEventListener('pointerdown', () => (lastTouch = performance.now()), true);
+document.addEventListener('scroll', () => (lastTouch = performance.now()), true);
+function setHTML(el_, html) { if (el_._html !== html) { el_._html = html; el_.innerHTML = html; } }
 function renderLive() {
   // refresh dynamic content once per second; pause while the player is tapping/scrolling
   if (UI.view.kind === 'build' || UI.view.kind === 'start') return;
@@ -381,7 +386,7 @@ function renderLive() {
 }
 
 function renderHeader() {
-  const h = $('sheetHeader'), v = UI.view;
+  const h = { set innerHTML(x) { setHTML($('sheetHeader'), x); } }, v = UI.view;
   if (v.kind === 'list') {
     const tabs = [['missions', 'Einsätze', S.missions.length], ['vehicles', 'Fahrzeuge', S.vehicles.length], ['buildings', 'Wachen', S.buildings.length]];
     const i = tabs.findIndex((t) => t[0] === UI.tab);
@@ -422,18 +427,18 @@ function renderBody() {
   else if (v.kind === 'building') h = buildingBody(bById(v.id));
   else if (v.kind === 'vehicle') h = vehicleBody(vById(v.id));
   else if (v.kind === 'build') h = buildBody();
-  b.innerHTML = h;
+  setHTML(b, h);
   renderActionBar();
 }
 function renderActionBar() {
   const bar = $('actionBar'), v = UI.view;
   if (v.kind === 'mission' && mById(v.id)) {
     bar.hidden = false;
-    bar.innerHTML = `<button class="btn alarm" data-action="alarm" ${UI.sel.size ? '' : 'disabled'}>${ms('campaign')} Alarmieren${UI.sel.size ? ` (${UI.sel.size})` : ''}</button>`;
+    setHTML(bar, `<button class="btn alarm" data-action="alarm" ${UI.sel.size ? '' : 'disabled'}>${ms('campaign')} Alarmieren${UI.sel.size ? ` (${UI.sel.size})` : ''}</button>`);
   } else if (v.kind === 'build') {
     const sel = UI.build?.type;
     bar.hidden = false;
-    bar.innerHTML = `<button class="btn primary" data-action="place" ${sel ? '' : 'disabled'}>${ms('add_location_alt')} Hier bauen${sel ? ` – ${BUILDINGS[sel].name}` : ''}</button>`;
+    setHTML(bar, `<button class="btn primary" data-action="place" ${sel ? '' : 'disabled'}>${ms('add_location_alt')} Hier bauen${sel ? ` – ${BUILDINGS[sel].name}` : ''}</button>`);
   } else bar.hidden = true;
   document.body.classList.toggle('has-bar', !bar.hidden);
 }
@@ -534,7 +539,7 @@ function buildingBody(b) {
   let h = '';
   if (b.type === 'KH') h += `<div class="card"><p>Rettungswagen bringen Patienten nach abgeschlossenen Einsätzen hierher. Jeder Transport bringt <b>+260 Credits</b>.</p><p class="dim">Fahrzeuge am Krankenhaus: ${S.vehicles.filter((v) => v.status === 8 && v.target === b.id).length}</p></div>`;
   if (t.slots) {
-    h += `<div class="section"><h3>Fahrzeuge</h3><span class="count">${vs.length}/${t.slots}</span></div>` + (vs.map((v) => vehicleRow(v)).join('') || '<p class="empty">Keine Fahrzeuge.</p>');
+    h += `<div class="section"><h3>Fahrzeuge</h3><span class="count">${vs.length}/${t.slots}</span></div>` + (vs.map((v) => `<div class="rowwrap">${vehicleRow(v)}<button class="trash ${UI.confirm === `veh:${v.id}` ? 'armed' : ''}" data-action="sell-veh" data-id="${v.id}" aria-label="Fahrzeug verkaufen">${ms(UI.confirm === `veh:${v.id}` ? 'check' : 'delete')}</button></div>`).join('') || '<p class="empty">Keine Fahrzeuge.</p>');
     h += `<div class="section"><h3>Fahrzeug kaufen</h3></div><div class="shop">` + t.vehicles.map((type) => {
       const vt = VEHICLES[type], locked = S.level < vt.level, full = vs.length >= t.slots, poor = S.credits < vt.cost;
       return `<button class="shop-item ${locked ? 'locked' : ''}" data-action="buy-veh" data-type="${type}" ${locked || full || poor ? 'disabled' : ''}>
@@ -542,6 +547,9 @@ function buildingBody(b) {
         <span class="txt"><div class="t">${vt.short}</div><div class="s">${vt.name}</div><div class="price">${locked ? `ab Level ${vt.level}` : `${fmtMoney(vt.cost)} Credits`}</div></span></button>`;
     }).join('') + '</div>';
   }
+  const refund = Math.round(BUILDINGS[b.type].cost * 0.5 + vs.reduce((s_, v) => s_ + refundVeh(v), 0));
+  h += `<div class="section"><h3>Verwaltung</h3></div><div class="pad">${sellButton('bld', b.id, `${t.name} abreißen (+${fmtMoney(refund)} Credits)`)}
+    <p class="dim small">Fahrzeuge der Wache werden mit verkauft. Fahrzeuge im Einsatz werden vorher abgezogen.</p></div>`;
   return h;
 }
 function vehicleBody(v) {
@@ -551,7 +559,17 @@ function vehicleBody(v) {
     ${m ? `<p>Einsatz: <a data-action="mission" data-id="${m.id}">${esc(mType(m).name)}</a></p>` : ''}
     ${b ? `<p class="dim">Wache: ${esc(b.name)}</p>` : ''}</div>`;
   if (v.status === 3 || v.status === 4) h += `<div class="pad"><button class="btn" data-action="recall" data-id="${v.id}">${ms('undo')} Zurück zur Wache</button></div>`;
+  h += `<div class="pad">${sellButton('veh', v.id, `Fahrzeug verkaufen (+${fmtMoney(refundVeh(v))} Credits)`)}</div>`;
   return h;
+}
+const refundVeh = (v) => Math.round(VEHICLES[v.type].cost * 0.5);
+function sellButton(kind, id, label) {
+  const armed = UI.confirm === `${kind}:${id}`;
+  return `<button class="btn danger ${armed ? 'armed' : ''}" data-action="sell-${kind}" data-id="${id}">${ms(armed ? 'warning' : 'delete')} ${armed ? 'Wirklich? Zum Bestätigen nochmal tippen' : label}</button>`;
+}
+function removeVehicle(v) {
+  S.vehicles = S.vehicles.filter((x) => x !== v);
+  const mk = markers.v.get(v.id); if (mk) { mk.remove(); markers.v.delete(v.id); }
 }
 
 function buildBody() {
@@ -568,9 +586,13 @@ function buildCost(type) {
   if (type === 'FW' && S.buildings.length === 0) return 0; // first fire station is free
   return Math.round(BUILDINGS[type].cost * (1 + n * 0.25));
 }
+function crosshairLngLat() {
+  const r = $('crosshair').getBoundingClientRect(), m = map.getContainer().getBoundingClientRect();
+  const ll = map.unproject([r.left - m.left, r.top - m.top]); return { lat: ll.lat, lng: ll.lng };
+}
 function updateBuildHint() {
   const el_ = $('buildHint'); if (!el_) return;
-  const c = map.getCenter(), p = { lat: c.lat, lng: c.lng };
+  const p = crosshairLngLat();
   const near = S.buildings.map((b) => dist(b, p)).sort((a, b) => a - b)[0];
   el_.textContent = near != null && near < 250 ? 'Zu nah an einem anderen Gebäude.' : 'Verschiebe die Karte, bis das Fadenkreuz auf dem gewünschten Platz liegt.';
 }
@@ -578,7 +600,11 @@ function updateBuildHint() {
 /* ============================================================== actions */
 const A = {
   tab: ({ tab }) => { UI.tab = tab; const seg = document.querySelector('.segment'); if (seg) seg.style.setProperty('--i', ['missions', 'vehicles', 'buildings'].indexOf(tab)); setTimeout(renderSheet, 160); },
-  back: () => setView({ kind: 'list' }),
+  back: () => {
+    let prev = UI.stack.pop();
+    while (prev && ((prev.kind === 'mission' && !mById(prev.id)) || (prev.kind === 'vehicle' && !vById(prev.id)) || (prev.kind === 'building' && !bById(prev.id)))) prev = UI.stack.pop();
+    setView(prev || { kind: 'list' }, { push: false });
+  },
   mission: ({ id }) => openMission(id),
   building: ({ id }) => setView({ kind: 'building', id }),
   vehicle: ({ id }) => setView({ kind: 'vehicle', id }),
@@ -589,9 +615,31 @@ const A = {
     for (const id of UI.sel) { const v = vById(id); if (!v || v.mission) continue; v.mission = m.id; v.status = 3; drive(v, m, 'mission', true); }
     toast(`${ms('campaign')} ${UI.sel.size} Fahrzeug${UI.sel.size > 1 ? 'e' : ''} alarmiert`);
     UI.sel.clear(); m.state = m.state === 'new' ? 'enroute' : m.state; playSound('go'); haptic();
-    drawMissions(); drawVehicles(); setView({ kind: 'list' });
+    drawMissions(); drawVehicles(); A.back();
   },
   recall: ({ id }) => { const v = vById(id); if (v) { sendHome(v); renderSheet(); } },
+  'sell-veh': ({ id }) => {
+    const v = vById(id); if (!v) return;
+    if (UI.confirm !== `veh:${id}`) { UI.confirm = `veh:${id}`; haptic(); renderBody(); setTimeout(() => { if (UI.confirm === `veh:${id}`) { UI.confirm = null; renderBody(); } }, 4000); return; }
+    UI.confirm = null;
+    const refund = refundVeh(v); S.credits += refund; removeVehicle(v);
+    toast(`${ms('delete')} ${esc(v.name)} verkauft · +${fmtMoney(refund)} Credits`);
+    if (UI.view.kind === 'vehicle' && UI.view.id === id) A.back(); else renderSheet();
+    renderHud(); save();
+  },
+  'sell-bld': ({ id }) => {
+    const b = bById(id); if (!b) return;
+    if (UI.confirm !== `bld:${id}`) { UI.confirm = `bld:${id}`; haptic(); renderBody(); setTimeout(() => { if (UI.confirm === `bld:${id}`) { UI.confirm = null; renderBody(); } }, 4000); return; }
+    UI.confirm = null;
+    const vs = S.vehicles.filter((v) => v.building === id);
+    let refund = Math.round(BUILDINGS[b.type].cost * 0.5);
+    for (const v of vs) { refund += refundVeh(v); removeVehicle(v); }
+    // patients heading to a demolished hospital go home instead
+    for (const v of S.vehicles) if (v.target === id) { v.target = null; sendHome(v); }
+    S.buildings = S.buildings.filter((x) => x !== b); S.credits += refund;
+    drawBuildings(); toast(`${ms('delete')} ${esc(b.name)} abgerissen · +${fmtMoney(refund)} Credits`);
+    setView({ kind: 'list' }); renderHud(); save();
+  },
   'buy-veh': ({ type }) => {
     const b = bById(UI.view.id), vt = VEHICLES[type]; if (!b || S.credits < vt.cost) return;
     S.credits -= vt.cost; addVehicle(b, type); haptic(); toast(`${ms('check_circle')} ${vt.name} gekauft`); renderSheet(); renderHud(); save();
@@ -606,7 +654,7 @@ const A = {
     const type = UI.build?.type; if (!type) return;
     const cost = buildCost(type);
     if (S.credits < cost) return toast(`${ms('error')} Nicht genug Credits`);
-    const c = map.getCenter(), p = { lat: c.lat, lng: c.lng };
+    const p = crosshairLngLat();
     if (S.buildings.some((b) => dist(b, p) < 250)) return toast(`${ms('error')} Zu nah an einem anderen Gebäude`);
     S.credits -= cost;
     const t = BUILDINGS[type];
@@ -688,6 +736,9 @@ function placeSheet() {
   const el_ = $('sheet'), full = el_.offsetHeight || window.innerHeight;
   el_.style.transform = `translateY(${full - snaps()[UI.sheet]}px)`; el_.dataset.snap = UI.sheet; document.body.dataset.sheet = UI.sheet;
   document.documentElement.style.setProperty('--sheet-h', sheetH() + 'px');
+  // the part of the sheet below the screen edge must not swallow list content
+  document.documentElement.style.setProperty('--hidden-h', Math.max(0, full - snaps()[UI.sheet]) + 'px');
+  if (UI.build) updateBuildHint();
 }
 (function drag() {
   const el_ = $('sheet'), h = $('sheetDrag');
