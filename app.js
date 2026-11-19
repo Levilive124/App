@@ -389,7 +389,7 @@ function renderNav() {
   const al = $('navAlert');
   if (n?.nextInc && n.nextInc.dist < 20000) {
     const k = KIND[n.nextInc.inc.kind];
-    al.hidden = false; al.style.background = k.color; al.style.top = top.offsetHeight + 10 + 'px';
+    al.hidden = false; al.style.background = `color-mix(in srgb, ${k.color} 80%, transparent)`; al.style.top = top.offsetHeight + 10 + 'px';
     al.innerHTML = `${ms(k.icon)}<span>${k.label} in ${fmtDist(n.nextInc.dist)}${n.nextInc.inc.delay ? ` · +${fmtDur(n.nextInc.inc.delay)}` : ''}</span>`;
   } else al.hidden = true;
   const rem = n?.remainingSec ?? r.duration;
@@ -539,7 +539,7 @@ function renderHeader() {
   } else if (v.kind === 'route') {
     h.innerHTML = `<div class="hrow" style="padding-bottom:0"><div class="grow"><h2 class="title s">Route nach ${esc(v.place.name)}</h2><div class="meta">Von: Mein Standort</div></div>
       <button class="close" data-action="back">${ms('close')}</button></div>
-      <div class="segment">${Object.keys(MODE_ICON).map((m) => `<button class="${m === S.mode ? 'on' : ''}" data-action="mode" data-mode="${m}">${ms(MODE_ICON[m])}</button>`).join('')}</div>
+      <div class="segment" style="--n:${Object.keys(MODE_ICON).length};--i:${Object.keys(MODE_ICON).indexOf(S.mode)}"><span class="thumb"></span>${Object.keys(MODE_ICON).map((m) => `<button class="${m === S.mode ? 'on' : ''}" data-action="mode" data-mode="${m}">${ms(MODE_ICON[m])}</button>`).join('')}</div>
       <div style="height:10px"></div>`;
   } else if (v.kind === 'incident') {
     const i = v.incident, k = KIND[i.kind];
@@ -714,11 +714,13 @@ function safeBottom() {
 }
 function snaps() {
   const H = window.innerHeight, full = $('sheet').offsetHeight || H;
-  return [safeBottom() + 96, Math.round(H * 0.42), full];
+  return [safeBottom() + 84, Math.round(H * 0.44), full];
 }
 function placeSheet() {
   const el = $('sheet'), full = el.offsetHeight || window.innerHeight;
   el.style.transform = `translateY(${full - snaps()[S.sheet]}px)`;
+  el.dataset.snap = S.sheet;
+  document.body.dataset.sheet = S.sheet;
   updatePill();
 }
 (function setupDrag() {
@@ -774,7 +776,11 @@ const A = {
     const url = `https://www.openstreetmap.org/?mlat=${p.loc.lat}&mlon=${p.loc.lng}#map=17/${p.loc.lat}/${p.loc.lng}`;
     try { if (navigator.share) await navigator.share({ title: p.name, text: `${p.name}\n${p.address}`, url }); else { await navigator.clipboard.writeText(url); toast('Link kopiert'); } } catch {}
   },
-  mode: ({ mode }) => { if (S.mode === mode) return; S.mode = mode; S.routes = []; S.routeIncidents = []; renderHeader(); loadRoutes({ fit: true }); },
+  mode: ({ mode }) => {
+    if (S.mode === mode) return;
+    const seg = document.querySelector('.segment'); if (seg) seg.style.setProperty('--i', Object.keys(MODE_ICON).indexOf(mode));
+    seg?.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+    S.mode = mode; S.routes = []; S.routeIncidents = []; loadRoutes({ fit: true }); },
   'select-route': ({ i }) => { if (+i !== S.sel) selectRoute(+i); },
   'start-nav': startNav,
   'end-nav': endNav,
