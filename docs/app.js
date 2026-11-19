@@ -37,11 +37,12 @@ const MANEUVER = {
   FORK_LEFT: 'fork_left', FORK_RIGHT: 'fork_right', MERGE: 'merge', ROUNDABOUT_LEFT: 'roundabout_left', ROUNDABOUT_RIGHT: 'roundabout_right',
 };
 const mIcon = (m) => MANEUVER[m] || 'straight';
+// [label, Overpass filter, icon, colour, search word for the fallback]
 const CATEGORIES = [
-  ['Tankstellen', '[amenity=fuel]', 'local_gas_station', '#0A84FF'], ['Laden', '[amenity=charging_station]', 'ev_station', '#30B0C7'],
-  ['Restaurants', '[amenity=restaurant]', 'restaurant', '#FF9500'], ['Parken', '[amenity=parking][access!=private]', 'local_parking', '#5856D6'],
-  ['Supermarkt', '[shop=supermarket]', 'shopping_cart', '#34C759'], ['Café', '[amenity=cafe]', 'local_cafe', '#A2845E'],
-  ['Apotheke', '[amenity=pharmacy]', 'local_pharmacy', '#FF3B30'], ['Hotels', '[tourism=hotel]', 'hotel', '#AF52DE'],
+  ['Tankstellen', '[amenity=fuel]', 'local_gas_station', '#0A84FF', 'Tankstelle'], ['Laden', '[amenity=charging_station]', 'ev_station', '#30B0C7', 'Ladestation'],
+  ['Restaurants', '[amenity=restaurant]', 'restaurant', '#FF9500', 'Restaurant'], ['Parken', '[amenity=parking][access!=private]', 'local_parking', '#5856D6', 'Parkplatz'],
+  ['Supermarkt', '[shop=supermarket]', 'shopping_cart', '#34C759', 'Supermarkt'], ['Café', '[amenity=cafe]', 'local_cafe', '#A2845E', 'Café'],
+  ['Apotheke', '[amenity=pharmacy]', 'local_pharmacy', '#FF3B30', 'Apotheke'], ['Hotels', '[tourism=hotel]', 'hotel', '#AF52DE', 'Hotel'],
 ];
 const KIND_HEX = { JAM: '#E0262B', SLOW: '#FF9500', CLOSURE: '#B0001A', WARNING: '#E6A100', ROADWORKS: '#D97A00' };
 const incTitle = (i) => `${KIND[i.kind].label} · ${i.road}`;
@@ -475,16 +476,18 @@ function goBack() {
 }
 
 async function runCategory(i) {
-  const [label, filter] = CATEGORIES[i];
+  const [label, filter, , , word] = CATEGORIES[i];
   document.activeElement?.blur?.();
   S.searching = true; renderHeaderLoading();
   try {
     const c = near();
-    const places = (await nearby(filter, c, map.getZoom() < 12 ? 10000 : 4000)).slice(0, 30);
+    let places = (await nearby(filter, c, map.getZoom() < 12 ? 10000 : 4000, word)).slice(0, 30);
+    if (!places.length) places = (await nearby(filter, c, 15000, word)).slice(0, 30); // widen the search
+    if (!places.length) toast(`Keine ${label} in der Nähe gefunden`);
     S.query = '';
     setView({ kind: 'results', query: label, places });
     if (places.length) fitPoints(places.slice(0, 15).map((p) => p.loc));
-  } catch (e) { toast(e.message); }
+  } catch (e) { toast(`${label} konnten nicht geladen werden – bitte gleich nochmal versuchen.`); }
   S.searching = false; renderHeaderLoading();
 }
 async function runSearch(q) {
