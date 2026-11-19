@@ -278,3 +278,6 @@ body[data-sheet="2"] #hud { opacity: 0; pointer-events: none; }
 .trash.armed { background: var(--red); color: #fff; box-shadow: 0 4px 12px color-mix(in srgb, var(--red) 45%, transparent); animation: shake .4s; }
 .btn.danger.armed { background: var(--red); color: #fff; animation: shake .4s; }
 @keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+/* marker roots are positioned by the map – never animate or transform them */
+.mk { cursor: pointer; line-height: 0; }
