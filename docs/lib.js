@@ -1,4 +1,8 @@
-// Shared logic: geo math, formatting, Google REST APIs, traffic disruption detection.
+// Karten – shared logic. Only free, key-less open services:
+//   Map:      OpenFreeMap (OpenStreetMap vector tiles) + Esri World Imagery (satellite)
+//   Search:   Photon (komoot) + Overpass (categories) + Nominatim (details)
+//   Routing:  OSRM (routing.openstreetmap.de)
+//   Traffic:  Autobahn GmbH des Bundes – verkehr.autobahn.de (Staus, Sperrungen, Baustellen)
 
 /* ------------------------------------------------------------------ geo */
 const R = 6371000;
@@ -15,28 +19,10 @@ export function bearing(a, b) {
   const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lng - a.lng));
   return (deg(Math.atan2(y, x)) + 360) % 360;
 }
-export function destination(p, brg, dist) {
-  const d = dist / R, b = rad(brg), lat1 = rad(p.lat), lon1 = rad(p.lng);
-  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(b));
-  const lon2 = lon1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
-  return { lat: deg(lat2), lng: deg(lon2) };
-}
 export function pathLength(pts, from = 0, to = pts.length - 1) {
   let s = 0;
   for (let i = from; i < to && i < pts.length - 1; i++) s += distance(pts[i], pts[i + 1]);
   return s;
-}
-export function pointAlong(pts, m) {
-  let acc = 0;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const seg = distance(pts[i], pts[i + 1]);
-    if (acc + seg >= m && seg > 0) {
-      const t = (m - acc) / seg;
-      return { lat: pts[i].lat + (pts[i + 1].lat - pts[i].lat) * t, lng: pts[i].lng + (pts[i + 1].lng - pts[i].lng) * t };
-    }
-    acc += seg;
-  }
-  return pts[pts.length - 1];
 }
 export function snapToPath(p, pts) {
   let best = { index: 0, point: pts[0], offset: Infinity, along: 0 };
@@ -54,8 +40,8 @@ export function snapToPath(p, pts) {
   }
   return best;
 }
-export function decodePolyline(enc = '') {
-  const pts = [];
+export function decodePolyline(enc = '', precision = 5) {
+  const f = 10 ** precision, pts = [];
   let i = 0, lat = 0, lng = 0;
   while (i < enc.length) {
     let b, sh = 0, r = 0;
@@ -64,7 +50,7 @@ export function decodePolyline(enc = '') {
     sh = 0; r = 0;
     do { b = enc.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32);
     lng += r & 1 ? ~(r >> 1) : r >> 1;
-    pts.push({ lat: lat / 1e5, lng: lng / 1e5 });
+    pts.push({ lat: lat / f, lng: lng / f });
   }
   return pts;
 }
@@ -84,160 +70,263 @@ export function fmtDur(sec) {
   return r ? `${h} Std. ${r} Min.` : `${h} Std.`;
 }
 export const fmtClock = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-const secs = (d) => (d ? parseFloat(String(d).replace('s', '')) || 0 : 0);
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* --------------------------------------------------------- Google REST */
-let KEY = '';
-export const setKey = (k) => (KEY = k);
-export class ApiError extends Error {}
-
-async function req(url, { body, fieldMask, method = body ? 'POST' : 'GET' } = {}) {
-  const headers = { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY };
-  if (fieldMask) headers['X-Goog-FieldMask'] = fieldMask;
-  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(json?.error?.message || `HTTP ${res.status}`);
-  return json;
-}
-const gl = (p) => ({ latitude: p.lat, longitude: p.lng });
-
-export async function autocomplete(input, near, sessionToken) {
-  const body = { input, languageCode: 'de', regionCode: 'DE', sessionToken, includeQueryPredictions: true };
-  if (near) { body.locationBias = { circle: { center: gl(near), radius: 30000 } }; body.origin = gl(near); }
-  const r = await req('https://places.googleapis.com/v1/places:autocomplete', { body });
-  return (r.suggestions || []).map((s) => {
-    if (s.placePrediction) {
-      const p = s.placePrediction;
-      return { placeId: p.placeId, title: p.structuredFormat?.mainText?.text ?? p.text?.text ?? '', subtitle: p.structuredFormat?.secondaryText?.text ?? '', dist: p.distanceMeters };
-    }
-    return { query: s.queryPrediction.text?.text, title: s.queryPrediction.text?.text ?? '', subtitle: 'In der Nähe suchen' };
-  });
+async function getJSON(url, opts = {}, timeout = 15000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctl.signal });
+    if (!res.ok) throw new Error(`Dienst nicht erreichbar (HTTP ${res.status})`);
+    return await res.json();
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Zeitüberschreitung – bitte erneut versuchen.');
+    if (e instanceof TypeError) throw new Error('Keine Verbindung zum Dienst. Internet prüfen.');
+    throw e;
+  } finally { clearTimeout(t); }
 }
 
-const PLACE_FIELDS = ['id', 'displayName', 'formattedAddress', 'location', 'primaryTypeDisplayName', 'rating', 'userRatingCount', 'nationalPhoneNumber', 'websiteUri', 'currentOpeningHours.openNow', 'regularOpeningHours.weekdayDescriptions', 'photos', 'priceLevel'];
-const mapPlace = (p) => ({
-  id: p.id, name: p.displayName?.text ?? 'Ort', address: p.formattedAddress ?? '',
-  loc: { lat: p.location?.latitude, lng: p.location?.longitude },
-  category: p.primaryTypeDisplayName?.text, rating: p.rating, ratingCount: p.userRatingCount,
-  phone: p.nationalPhoneNumber, website: p.websiteUri, openNow: p.currentOpeningHours?.openNow,
-  hours: p.regularOpeningHours?.weekdayDescriptions, priceLevel: p.priceLevel,
-  photo: p.photos?.[0]?.name ? `https://places.googleapis.com/v1/${p.photos[0].name}/media?maxWidthPx=800&key=${KEY}` : null,
-});
-export async function placeDetails(id, sessionToken) {
-  const qs = new URLSearchParams({ languageCode: 'de', regionCode: 'DE' });
-  if (sessionToken) qs.set('sessionToken', sessionToken);
-  return mapPlace(await req(`https://places.googleapis.com/v1/places/${id}?${qs}`, { fieldMask: PLACE_FIELDS.join(',') }));
-}
-export async function searchText(q, near) {
-  const body = { textQuery: q, languageCode: 'de', regionCode: 'DE', maxResultCount: 20 };
-  if (near) body.locationBias = { circle: { center: gl(near), radius: 15000 } };
-  const r = await req('https://places.googleapis.com/v1/places:searchText', { body, fieldMask: PLACE_FIELDS.map((f) => 'places.' + f).join(',') });
-  return (r.places || []).map(mapPlace);
-}
-
-const FULL = ['routes.duration', 'routes.staticDuration', 'routes.distanceMeters', 'routes.polyline.encodedPolyline', 'routes.description', 'routes.warnings', 'routes.routeLabels', 'routes.travelAdvisory.speedReadingIntervals', 'routes.travelAdvisory.tollInfo', 'routes.legs.steps.distanceMeters', 'routes.legs.steps.staticDuration', 'routes.legs.steps.polyline.encodedPolyline', 'routes.legs.steps.navigationInstruction', 'routes.legs.steps.travelMode', 'routes.legs.steps.transitDetails'].join(',');
-const LITE = ['routes.duration', 'routes.staticDuration', 'routes.distanceMeters', 'routes.polyline.encodedPolyline', 'routes.travelAdvisory.speedReadingIntervals'].join(',');
-
-export async function computeRoutes(origin, dest, mode, o = {}) {
-  const traffic = mode === 'DRIVE' || mode === 'TWO_WHEELER';
-  const body = {
-    origin: { location: { latLng: gl(origin) } }, destination: { location: { latLng: gl(dest) } },
-    travelMode: mode, languageCode: 'de', regionCode: 'DE', units: 'METRIC',
-    computeAlternativeRoutes: !!o.alternatives && mode !== 'TRANSIT',
+/* ------------------------------------------------------------- search */
+function photonPlace(f) {
+  const p = f.properties || {};
+  const [lng, lat] = f.geometry.coordinates;
+  const street = [p.street, p.housenumber].filter(Boolean).join(' ');
+  const town = [p.postcode, p.city || p.town || p.village || p.county].filter(Boolean).join(' ');
+  const name = p.name || street || town || 'Ort';
+  const address = [street !== name ? street : null, town !== name ? town : null, p.country !== 'Deutschland' ? p.country : null].filter(Boolean).join(', ');
+  return {
+    id: `${(p.osm_type || 'X')[0]}${p.osm_id ?? `${lat},${lng}`}`, osmType: p.osm_type, osmId: p.osm_id,
+    name, address, loc: { lat, lng }, category: CATEGORY_LABEL[p.osm_value] || CATEGORY_LABEL[p.osm_key] || null,
   };
-  if (traffic) {
-    body.routingPreference = 'TRAFFIC_AWARE_OPTIMAL';
-    body.extraComputations = ['TRAFFIC_ON_POLYLINE', ...(o.lite ? [] : ['TOLLS'])];
-    body.routeModifiers = { avoidTolls: !!o.avoidTolls, avoidHighways: !!o.avoidHighways, avoidFerries: !!o.avoidFerries };
-  }
-  if (mode === 'TRANSIT') body.departureTime = new Date().toISOString();
-  const r = await req('https://routes.googleapis.com/directions/v2:computeRoutes', { body, fieldMask: o.lite ? LITE : FULL });
-  return (r.routes || []).map((rt, i) => ({
-    id: `${i}-${rt.distanceMeters}-${rt.duration}-${Date.now()}`,
-    mode,
-    points: decodePolyline(rt.polyline?.encodedPolyline),
-    distance: rt.distanceMeters ?? 0,
-    duration: secs(rt.duration),
-    staticDuration: secs(rt.staticDuration ?? rt.duration),
-    description: rt.description, labels: rt.routeLabels || [], warnings: rt.warnings || [],
-    tolls: !!rt.travelAdvisory?.tollInfo,
-    speed: (rt.travelAdvisory?.speedReadingIntervals || []).map((s) => ({ start: s.startPolylinePointIndex ?? 0, end: s.endPolylinePointIndex ?? 0, speed: s.speed ?? 'NORMAL' })),
-    steps: (rt.legs || []).flatMap((leg) => (leg.steps || []).map((s) => {
-      const t = s.transitDetails;
-      return {
-        instruction: s.navigationInstruction?.instructions ?? '', maneuver: s.navigationInstruction?.maneuver,
-        distance: s.distanceMeters ?? 0, duration: secs(s.staticDuration), travelMode: s.travelMode,
-        transit: t ? {
-          line: t.transitLine?.nameShort ?? t.transitLine?.name ?? '', color: t.transitLine?.color, textColor: t.transitLine?.textColor,
-          vehicle: t.transitLine?.vehicle?.name?.text, headsign: t.headsign,
-          from: t.stopDetails?.departureStop?.name, to: t.stopDetails?.arrivalStop?.name,
-          dep: t.localizedValues?.departureTime?.time?.text, arr: t.localizedValues?.arrivalTime?.time?.text, stops: t.stopCount,
-        } : null,
-      };
-    })),
-  }));
+}
+const CATEGORY_LABEL = {
+  fuel: 'Tankstelle', charging_station: 'Ladestation', restaurant: 'Restaurant', fast_food: 'Schnellrestaurant', cafe: 'Café',
+  parking: 'Parkplatz', supermarket: 'Supermarkt', pharmacy: 'Apotheke', hotel: 'Hotel', hospital: 'Krankenhaus',
+  school: 'Schule', bakery: 'Bäckerei', bar: 'Bar', pub: 'Kneipe', bank: 'Bank', atm: 'Geldautomat', station: 'Bahnhof',
+  bus_stop: 'Bushaltestelle', city: 'Stadt', town: 'Stadt', village: 'Dorf', suburb: 'Stadtteil', residential: 'Straße',
+  primary: 'Straße', secondary: 'Straße', tertiary: 'Straße', house: 'Adresse', museum: 'Museum', park: 'Park',
+  doctors: 'Arztpraxis', dentist: 'Zahnarzt', police: 'Polizei', post_office: 'Post', cinema: 'Kino', theatre: 'Theater',
+};
+
+export async function autocomplete(q, near) {
+  const qs = new URLSearchParams({ q, lang: 'de', limit: '8' });
+  if (near) { qs.set('lat', near.lat); qs.set('lon', near.lng); }
+  const r = await getJSON(`https://photon.komoot.io/api/?${qs}`);
+  return (r.features || []).map(photonPlace);
+}
+export async function reverse(loc) {
+  try {
+    const r = await getJSON(`https://photon.komoot.io/reverse?lat=${loc.lat}&lon=${loc.lng}&lang=de&limit=1`);
+    return r.features?.[0] ? photonPlace(r.features[0]) : null;
+  } catch { return null; }
+}
+/** Extra details (opening hours, phone, website) from Nominatim. */
+export async function placeExtras(place) {
+  if (!place.osmType || !place.osmId) return {};
+  const t = { node: 'N', way: 'W', relation: 'R' }[place.osmType] || String(place.osmType)[0].toUpperCase();
+  try {
+    const r = await getJSON(`https://nominatim.openstreetmap.org/lookup?osm_ids=${t}${place.osmId}&format=jsonv2&extratags=1&addressdetails=1&accept-language=de`);
+    const x = r?.[0]?.extratags || {};
+    return {
+      phone: x.phone || x['contact:phone'], website: x.website || x['contact:website'] || x.url,
+      hours: x.opening_hours, cuisine: x.cuisine, wheelchair: x.wheelchair, operator: x.operator || x.brand,
+    };
+  } catch { return {}; }
 }
 
-/* ------------------------------------------------ traffic disruptions */
-// Built from the Routes API's speedReadingIntervals (SLOW / TRAFFIC_JAM stretches).
-export function incidentsFromRoute(route, source = 'route') {
-  const { points, speed } = route;
-  if (!points.length || !speed.length) return [];
-  const merged = [];
-  for (const iv of speed) {
-    if (iv.speed === 'NORMAL') continue;
-    const last = merged[merged.length - 1];
-    if (last && iv.start - last.end <= 1) { last.end = iv.end; if (iv.speed === 'TRAFFIC_JAM') last.speed = 'TRAFFIC_JAM'; }
-    else merged.push({ ...iv });
-  }
-  const totalDelay = Math.max(0, route.duration - route.staticDuration);
-  const raw = merged.map((m) => { const seg = points.slice(m.start, m.end + 1); return { m, seg, len: pathLength(seg) }; })
-    .filter((x) => x.seg.length >= 2 && x.len >= 120);
-  const w = (x) => x.len * (x.m.speed === 'TRAFFIC_JAM' ? 3 : 1);
-  const tw = raw.reduce((s, x) => s + w(x), 0) || 1;
-  return raw.map((x) => {
-    const kind = x.m.speed === 'TRAFFIC_JAM' ? 'JAM' : 'SLOW';
-    const fallback = kind === 'JAM' ? x.len / 3 - x.len / 13 : x.len / 8 - x.len / 13;
-    const delay = totalDelay > 0 ? (totalDelay * w(x)) / tw : fallback;
+/** Nearby places of a category via Overpass. */
+export async function nearby(filter, center, radius = 4000) {
+  const q = `[out:json][timeout:20];(nwr${filter}(around:${radius},${center.lat},${center.lng}););out center tags 40;`;
+  const r = await getJSON('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 25000);
+  return (r.elements || []).map((e) => {
+    const tg = e.tags || {};
+    const lat = e.lat ?? e.center?.lat, lng = e.lon ?? e.center?.lon;
+    const street = [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' ');
     return {
-      id: `${source}-${x.seg[0].lat.toFixed(4)},${x.seg[0].lng.toFixed(4)}-${kind}`,
-      kind, points: x.seg, pos: pointAlong(x.seg, x.len / 2), length: x.len,
-      delay: Math.max(30, delay), heading: bearing(x.seg[0], x.seg[x.seg.length - 1]),
-      at: source === 'route' ? pathLength(points, 0, x.m.start) : null, source,
+      id: `${e.type[0].toUpperCase()}${e.id}`, osmType: e.type, osmId: e.id,
+      name: tg.name || tg.brand || tg.operator || CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || 'Ort',
+      address: [street, tg['addr:city']].filter(Boolean).join(', '), loc: { lat, lng },
+      category: CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || null,
+      phone: tg.phone || tg['contact:phone'], website: tg.website || tg['contact:website'], hours: tg.opening_hours,
+    };
+  }).filter((p) => p.loc.lat != null)
+    .sort((a, b) => distance(center, a.loc) - distance(center, b.loc));
+}
+
+/* ------------------------------------------------------------ routing */
+const PROFILE = { DRIVE: 'routed-car', BICYCLE: 'routed-bike', WALK: 'routed-foot' };
+const SPEED_FACTOR = { DRIVE: 1, BICYCLE: 1, WALK: 1 };
+
+const DIR = { left: 'links', right: 'rechts', 'slight left': 'leicht links', 'slight right': 'leicht rechts', 'sharp left': 'scharf links', 'sharp right': 'scharf rechts', straight: 'geradeaus', uturn: 'wenden' };
+const ORD = ['', 'erste', 'zweite', 'dritte', 'vierte', 'fünfte', 'sechste', 'siebte', 'achte'];
+
+function roadName(s) {
+  const n = s.name || '', ref = s.ref || '';
+  if (n && ref) return `${n} (${ref})`;
+  return n || ref;
+}
+function instruction(s, mode) {
+  const m = s.maneuver, d = DIR[m.modifier] || '', name = roadName(s);
+  const onto = name ? ` auf ${name}` : '';
+  switch (m.type) {
+    case 'depart': return `Starten${name ? ` auf ${name}` : ''}${m.bearing_after != null ? ` Richtung ${compass(m.bearing_after)}` : ''}`;
+    case 'arrive': return m.modifier === 'left' ? 'Ziel erreicht – es liegt links' : m.modifier === 'right' ? 'Ziel erreicht – es liegt rechts' : 'Ziel erreicht';
+    case 'turn': case 'end of road':
+      if (m.modifier === 'uturn') return `Wenden${onto}`;
+      if (m.modifier === 'straight') return `Geradeaus weiter${onto}`;
+      return `${cap(d)} abbiegen${onto}`;
+    case 'new name': case 'continue': return m.modifier && m.modifier !== 'straight' && m.modifier !== 'uturn' ? `${cap(d)} halten${onto}` : `Weiter${onto}`;
+    case 'merge': return `Einfädeln${onto}`;
+    case 'on ramp': return `${d ? cap(d) + ' ' : ''}auf die Auffahrt${name ? ` Richtung ${s.destinations || name}` : ''}`.replace(/^auf/, 'Auf');
+    case 'off ramp': return `${d ? cap(d) + ' ' : ''}die Ausfahrt nehmen${s.exits ? ` ${s.exits}` : ''}${s.destinations ? ` Richtung ${s.destinations}` : onto}`.replace(/^die/, 'Die');
+    case 'fork': return `An der Gabelung ${d || 'weiter'} halten${onto}`;
+    case 'roundabout': case 'rotary': case 'roundabout turn':
+      return `Im Kreisverkehr die ${ORD[m.exit] || m.exit + '.'} Ausfahrt nehmen${onto}`;
+    case 'exit roundabout': case 'exit rotary': return `Kreisverkehr verlassen${onto}`;
+    case 'notification': return `Weiter${onto}`;
+    default: return d ? `${cap(d)}${onto}` : `Weiter${onto}`;
+  }
+}
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+function compass(b) { return ['Norden', 'Nordosten', 'Osten', 'Südosten', 'Süden', 'Südwesten', 'Westen', 'Nordwesten'][Math.round(b / 45) % 8]; }
+function maneuverKey(m) {
+  if (m.type === 'depart') return 'DEPART';
+  if (m.type === 'arrive') return 'ARRIVE';
+  if (m.type.includes('roundabout') || m.type === 'rotary') return /left/.test(m.modifier || '') ? 'ROUNDABOUT_LEFT' : 'ROUNDABOUT_RIGHT';
+  if (m.type === 'merge') return 'MERGE';
+  if (m.type === 'fork') return /left/.test(m.modifier) ? 'FORK_LEFT' : 'FORK_RIGHT';
+  if (m.type === 'on ramp' || m.type === 'off ramp') return /left/.test(m.modifier) ? 'RAMP_LEFT' : 'RAMP_RIGHT';
+  return { left: 'TURN_LEFT', right: 'TURN_RIGHT', 'slight left': 'TURN_SLIGHT_LEFT', 'slight right': 'TURN_SLIGHT_RIGHT', 'sharp left': 'TURN_SHARP_LEFT', 'sharp right': 'TURN_SHARP_RIGHT', uturn: 'UTURN_LEFT' }[m.modifier] || 'STRAIGHT';
+}
+
+export async function computeRoutes(origin, dest, mode, { alternatives = true, avoidHighways = false } = {}) {
+  const prof = PROFILE[mode] || PROFILE.DRIVE;
+  const qs = new URLSearchParams({ overview: 'full', geometries: 'polyline6', steps: 'true', alternatives: alternatives ? '3' : 'false' });
+  if (avoidHighways && mode === 'DRIVE') qs.set('exclude', 'motorway');
+  let r;
+  try {
+    r = await getJSON(`https://routing.openstreetmap.de/${prof}/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?${qs}`, {}, 20000);
+  } catch (e) {
+    if (!qs.has('exclude')) throw e;
+    qs.delete('exclude');
+    r = await getJSON(`https://routing.openstreetmap.de/${prof}/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?${qs}`, {}, 20000);
+  }
+  if (r.code !== 'Ok') throw new Error(r.code === 'NoRoute' ? 'Keine Route gefunden.' : `Routing-Fehler: ${r.message || r.code}`);
+  return (r.routes || []).map((rt, i) => {
+    const steps = rt.legs.flatMap((l) => l.steps).map((s) => ({
+      instruction: instruction(s, mode), maneuver: maneuverKey(s.maneuver), distance: s.distance, duration: s.duration,
+      loc: { lat: s.maneuver.location[1], lng: s.maneuver.location[0] },
+    }));
+    // OSRM: step[i] starts with its manoeuvre, so while driving step i the next manoeuvre is step[i + 1].
+    const names = [...new Set(rt.legs.flatMap((l) => l.steps).map((s) => s.ref || s.name).filter(Boolean))].slice(0, 2);
+    return {
+      id: `${i}-${Math.round(rt.distance)}-${Date.now()}`, mode,
+      points: decodePolyline(rt.geometry, 6), distance: rt.distance, duration: rt.duration * SPEED_FACTOR[mode],
+      description: names.join(', '), steps,
     };
   });
 }
 
-export function dedupe(list) {
+/* ------------------------------------------------- traffic (Autobahn) */
+const AB = 'https://verkehr.autobahn.de/o/autobahn';
+let roadsCache = null, trafficCache = null;
+
+async function roads() {
+  if (!roadsCache) roadsCache = getJSON(`${AB}/`).then((r) => (r.roads || []).map((x) => x.trim()).filter((x) => /^A\d+$/.test(x))).catch((e) => { roadsCache = null; throw e; });
+  return roadsCache;
+}
+function parseDelay(w) {
+  if (w.delayTimeValue != null && !isNaN(+w.delayTimeValue)) return +w.delayTimeValue * 60;
+  const txt = (w.description || []).join(' ');
+  const m = /(\d+)\s*Min/i.exec(txt);
+  return m ? +m[1] * 60 : null;
+}
+function lengthFrom(w) {
+  const txt = (w.description || []).join(' ');
+  const m = /(\d+(?:[.,]\d+)?)\s*km/i.exec(txt);
+  return m ? parseFloat(m[1].replace(',', '.')) * 1000 : null;
+}
+function toIncident(w, road, kind) {
+  const lat = parseFloat(w.coordinate?.lat), lng = parseFloat(w.coordinate?.long);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  let points = [];
+  const g = w.geometry;
+  if (g?.type === 'LineString') points = g.coordinates.map(([x, y]) => ({ lat: y, lng: x }));
+  else if (g?.type === 'MultiLineString') points = g.coordinates.flat().map(([x, y]) => ({ lat: y, lng: x }));
+  const t = (w.abnormalTrafficType || '').toUpperCase();
+  const blocked = String(w.isBlocked) === 'true';
+  let k = kind;
+  if (kind === 'WARNING') k = blocked ? 'CLOSURE' : t === 'STATIONARY_TRAFFIC' || t === 'QUEUING_TRAFFIC' || /stau/i.test(w.title + (w.description || []).join(' ')) ? 'JAM' : t === 'SLOW_TRAFFIC' ? 'SLOW' : 'WARNING';
+  const desc = (w.description || []).filter((x) => x && x.trim());
+  return {
+    id: w.identifier || `${road}-${lat},${lng}`, road, kind: k,
+    title: (w.title || road).replace(/\s*\|\s*/g, ' · '), subtitle: w.subtitle || '',
+    description: desc, pos: { lat, lng }, points,
+    length: points.length > 1 ? pathLength(points) : lengthFrom(w), delay: parseDelay(w),
+    speed: w.averageSpeed && !isNaN(+w.averageSpeed) ? +w.averageSpeed : null,
+    since: w.startTimestamp || null,
+  };
+}
+async function pool(items, size, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+}
+/**
+ * All current disruptions on German Autobahns (warnings incl. traffic jams, closures; roadworks optional).
+ * Cached for 4 minutes.
+ */
+export async function trafficGermany({ force = false, roadworks = false, onProgress } = {}) {
+  const key = roadworks ? 'rw' : 'std';
+  if (!force && trafficCache?.key === key && Date.now() - trafficCache.at < 240000) return trafficCache.list;
+  const list = (await roads());
   const out = [];
-  for (const inc of [...list].sort((a, b) => b.length - a.length)) {
-    if (!out.some((o) => distance(o.pos, inc.pos) < 400 && Math.abs(((o.heading - inc.heading + 540) % 360) - 180) < 60)) out.push(inc);
-  }
-  return out;
+  const services = [['warning', 'WARNING'], ['closure', 'CLOSURE'], ...(roadworks ? [['roadworks', 'ROADWORKS']] : [])];
+  const jobs = list.flatMap((r) => services.map(([s, k]) => [r, s, k]));
+  let done = 0;
+  await pool(jobs, 8, async ([road, svc, kind]) => {
+    try {
+      const r = await getJSON(`${AB}/${road}/services/${svc}`, {}, 15000);
+      const arr = r[svc] || r.warning || r.closure || r.roadworks || [];
+      for (const w of arr) { const inc = toIncident(w, road, kind); if (inc) out.push(inc); }
+    } catch {}
+    onProgress?.(++done / jobs.length);
+  });
+  const seen = new Set();
+  const uniq = out.filter((x) => (seen.has(x.id) ? false : seen.add(x.id)));
+  const rank = { CLOSURE: 0, JAM: 1, SLOW: 2, WARNING: 3, ROADWORKS: 4 };
+  uniq.sort((a, b) => rank[a.kind] - rank[b.kind] || (b.delay ?? 0) - (a.delay ?? 0));
+  trafficCache = { key, at: Date.now(), list: uniq };
+  return uniq;
 }
 
-let scanCache = null;
-/** Samples live traffic around `center` with 16 radial routes (8 directions, in- and outbound). */
-export async function scanArea(center, radius, force = false) {
-  radius = Math.min(40000, Math.max(3000, radius));
-  const g = radius / 111000 / 2;
-  const key = `${Math.round(center.lat / g)},${Math.round(center.lng / g)},${Math.round(radius / 2000)}`;
-  if (!force && scanCache && scanCache.key === key && Date.now() - scanCache.at < 180000) return scanCache.list;
-  const jobs = [];
-  for (let b = 0; b < 360; b += 45) {
-    const far = destination(center, b, radius), near = destination(center, b + 180, radius * 0.25);
-    jobs.push([near, far], [far, near]);
-  }
-  const results = [];
-  let i = 0;
-  await Promise.all(Array.from({ length: 4 }, async () => {
-    while (i < jobs.length) {
-      const [a, b] = jobs[i++];
-      try { for (const r of await computeRoutes(a, b, 'DRIVE', { lite: true })) results.push(...incidentsFromRoute(r, 'area')); } catch {}
+/** Disruptions lying on a route (within ~120 m of its line), with distance from the start. */
+export function incidentsOnRoute(route, all) {
+  if (!route || route.mode !== 'DRIVE') return [];
+  const pts = route.points;
+  // quick bbox filter
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  for (const p of pts) { minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat); minLng = Math.min(minLng, p.lng); maxLng = Math.max(maxLng, p.lng); }
+  const pad = 0.01;
+  const res = [];
+  for (const inc of all) {
+    const p = inc.pos;
+    if (p.lat < minLat - pad || p.lat > maxLat + pad || p.lng < minLng - pad || p.lng > maxLng + pad) continue;
+    const s = snapToPath(p, pts);
+    if (s.offset > 120) continue;
+    // direction check: incident line must run the same way as the route
+    if (inc.points.length > 1) {
+      const a = snapToPath(inc.points[0], pts), b = snapToPath(inc.points[inc.points.length - 1], pts);
+      if (a.offset < 150 && b.offset < 150 && b.along < a.along - 50) continue;
     }
-  }));
-  const list = dedupe(results).sort((a, b) => (a.kind === b.kind ? b.delay - a.delay : a.kind === 'JAM' ? -1 : 1)).slice(0, 40);
-  scanCache = { key, at: Date.now(), list };
-  return list;
+    res.push({ ...inc, at: s.along });
+  }
+  return res.sort((a, b) => a.at - b.at);
 }
+
+export const KIND = {
+  JAM: { label: 'Stau', icon: 'car_crash', color: 'var(--red)' },
+  SLOW: { label: 'Stockender Verkehr', icon: 'traffic', color: 'var(--orange)' },
+  CLOSURE: { label: 'Sperrung', icon: 'block', color: '#c00020' },
+  WARNING: { label: 'Verkehrsmeldung', icon: 'warning', color: '#e6a100' },
+  ROADWORKS: { label: 'Baustelle', icon: 'construction', color: '#d97a00' },
+};
