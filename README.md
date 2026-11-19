@@ -5,6 +5,16 @@ Vollbildkarte, Suche im Bottom-Sheet, Ortsdetails, Routenplanung mit Alternative
 Turn-by-Turn-Navigation mit Sprachansagen. **Verkehrsstörungen (Staus, stockender Verkehr)
 werden live über die Google APIs geladen.**
 
+## iPhone ohne PC: Web-App (Ordner `docs/`)
+
+Im Ordner `docs/` liegt dieselbe App als Web-App für Safari (Google Maps JS + Places/Routes API).
+Sie wird über GitHub Pages veröffentlicht und per **Teilen → Zum Home-Bildschirm** wie eine App installiert.
+Der Google-Schlüssel wird direkt in der App eingegeben und nur auf dem Gerät gespeichert.
+
+1. GitHub → Repo → **Settings → General → Danger Zone → Change visibility → Public** (kostenloses Pages geht nur bei öffentlichen Repos; im Code steckt kein Schlüssel).
+2. **Settings → Pages** → Source „Deploy from a branch“ → Branch `claude/gracious-darwin-q1ovh2`, Ordner `/docs` → Save.
+3. Nach 1–2 Minuten `https://levilive124.github.io/app/` in Safari öffnen.
+
 ## Funktionen
 
 | Bereich | Was drin ist |

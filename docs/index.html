@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Karten</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Karten">
+<meta name="theme-color" content="#0A84FF">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400..600,0..1,0&display=block">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<div id="controls">
+  <div class="group">
+    <button data-action="layers" aria-label="Karten"><span class="ms">layers</span></button>
+    <button data-action="locate" aria-label="Mein Standort"><span class="ms" id="locateIcon">near_me</span></button>
+  </div>
+  <div class="group">
+    <button data-action="toggle-traffic" id="btnTraffic" aria-label="Live-Verkehr"><span class="ms">traffic</span></button>
+    <button data-action="toggle-incidents" id="btnIncidents" aria-label="Verkehrsstörungen"><span class="ms">car_crash</span></button>
+    <button data-action="toggle-3d" id="btn3d" aria-label="3D"><span class="ms">view_in_ar</span></button>
+  </div>
+</div>
+<div id="pill" hidden></div>
+
+<section id="sheet">
+  <div id="sheetDrag">
+    <div class="handle"></div>
+    <div id="sheetHeader"></div>
+  </div>
+  <div id="sheetBody"></div>
+</section>
+
+<div id="navTop" hidden></div>
+<div id="navAlert" hidden></div>
+<div id="navBottom" hidden></div>
+<button id="recenter" data-action="recenter" hidden>Zentrieren</button>
+
+<div id="layers" class="modal" hidden>
+  <div class="backdrop" data-action="close-layers"></div>
+  <div class="modal-card" id="layersCard"></div>
+</div>
+
+<div id="setup" hidden></div>
+<div id="toast" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
