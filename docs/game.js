@@ -1,6 +1,6 @@
-import { BUILDINGS, CAT, MISSIONS, STATUS, VEHICLES, xpForLevel } from './data.js?v=g2';
+import { BUILDINGS, CAT, MISSIONS, STATUS, VEHICLES, xpForLevel } from './data.js?v=g3';
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const SIM = 3;                 // game seconds per real second at speed 1×
 const SIREN = 0.72;            // driving time factor with blue lights
 const SAVE_KEY = 'ez.save.v1';
@@ -51,7 +51,7 @@ function haptic() { try { navigator.vibrate?.(12); } catch {} }
 /* ============================================================== services */
 async function route(from, to) {
   try {
-    const r = await getJSON(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=simplified&geometries=polyline`);
+    const r = await getJSON(`https://routing.openstreetmap.de/routed-car/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=polyline`);
     if (r.code !== 'Ok' || !r.routes?.[0]) throw new Error('no route');
     const pts = decode(r.routes[0].geometry);
     return { pts: pts.length > 1 ? pts : [from, to], dur: r.routes[0].duration };
@@ -272,10 +272,11 @@ function initMap() {
   map.on('move', () => { if (UI.build) updateBuildHint(); });
 }
 function el(html, onClick) {
-  const d = document.createElement('div'); d.innerHTML = html.trim(); const n = d.firstElementChild;
-  if (onClick) n.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-  return n;
+  const root = document.createElement('div'); root.className = 'mk'; root.innerHTML = html.trim();
+  if (onClick) root.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
+  return root;
 }
+const inner = (mk) => mk.getElement().firstElementChild;
 function drawBuildings() {
   for (const [id, mk] of markers.b) if (!bById(id)) { mk.remove(); markers.b.delete(id); }
   for (const b of S.buildings) {
@@ -294,7 +295,7 @@ function drawMissions() {
       mk = new maplibregl.Marker({ element: el(`<div class="mk-m" style="--c:${c.color}">${ms(c.icon)}<i></i></div>`, () => openMission(m.id)) }).setLngLat([m.lng, m.lat]).addTo(map);
       markers.m.set(m.id, mk);
     }
-    mk.getElement().dataset.state = m.state;
+    inner(mk).dataset.state = m.state;
   }
 }
 function drawVehicles() {
@@ -309,7 +310,7 @@ function drawVehicles() {
       mk = new maplibregl.Marker({ element: el(`<div class="mk-v"><b></b></div>`, () => setView({ kind: 'vehicle', id: v.id })) }).setLngLat([p.lng, p.lat]).addTo(map);
       markers.v.set(v.id, mk);
     } else mk.setLngLat([p.lng, p.lat]);
-    const e = mk.getElement();
+    const e = inner(mk);
     if (e.dataset.s !== String(v.status)) {
       e.dataset.s = v.status; e.style.setProperty('--c', STATUS[v.status].color);
       e.querySelector('b').textContent = `${VEHICLES[v.type].short} · ${v.status}`;
@@ -758,6 +759,8 @@ function placeSheet() {
 })();
 
 /* ================================================================= boot */
+// read-only handle for automated UI tests
+Object.defineProperty(window, '__ez', { value: { get map() { return map; }, get state() { return S; }, markers } });
 function boot() {
   if (!window.maplibregl) { $('sheetBody').innerHTML = '<p class="empty">Die Karte konnte nicht geladen werden. Bitte Internet prüfen und neu laden.</p>'; return; }
   initMap();
