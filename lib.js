@@ -135,23 +135,50 @@ export async function placeExtras(place) {
 }
 
 /** Nearby places of a category via Overpass. */
-export async function nearby(filter, center, radius = 4000) {
-  const q = `[out:json][timeout:20];(nwr${filter}(around:${radius},${center.lat},${center.lng}););out center tags 40;`;
-  const r = await getJSON('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 25000);
-  return (r.elements || []).map((e) => {
-    const tg = e.tags || {};
-    const lat = e.lat ?? e.center?.lat, lng = e.lon ?? e.center?.lon;
-    const street = [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' ');
-    return {
-      id: `${e.type[0].toUpperCase()}${e.id}`, osmType: e.type, osmId: e.id,
-      name: tg.name || tg.brand || tg.operator || CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || 'Ort',
-      address: [street, tg['addr:city']].filter(Boolean).join(', '), loc: { lat, lng },
-      category: CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || null,
-      phone: tg.phone || tg['contact:phone'], website: tg.website || tg['contact:website'], hours: tg.opening_hours,
-    };
-  }).filter((p) => p.loc.lat != null)
-    .sort((a, b) => distance(center, a.loc) - distance(center, b.loc));
+const OVERPASS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+function overpassPlace(e) {
+  const tg = e.tags || {};
+  const lat = e.lat ?? e.center?.lat, lng = e.lon ?? e.center?.lon;
+  const street = [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' ');
+  return {
+    id: `${e.type[0].toUpperCase()}${e.id}`, osmType: e.type, osmId: e.id,
+    name: tg.name || tg.brand || tg.operator || CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || 'Ort',
+    address: [street, tg['addr:city']].filter(Boolean).join(', '), loc: { lat, lng },
+    category: CATEGORY_LABEL[tg.amenity || tg.shop || tg.tourism] || null,
+    phone: tg.phone || tg['contact:phone'], website: tg.website || tg['contact:website'], hours: tg.opening_hours,
+  };
 }
+
+/**
+ * Nearby places of a category. Tries several Overpass servers (they are often busy),
+ * then falls back to Photon with an OSM tag filter.
+ * @param filter   Overpass tag filter, e.g. "[amenity=fuel]"
+ * @param word     German search word for the Photon fallback, e.g. "Tankstelle"
+ */
+export async function nearby(filter, center, radius = 4000, word = '') {
+  const q = `[out:json][timeout:12];nwr${filter}(around:${Math.round(radius)},${center.lat.toFixed(5)},${center.lng.toFixed(5)});out center 40;`;
+  for (const url of OVERPASS) {
+    try {
+      const r = await getJSON(`${url}?data=${encodeURIComponent(q)}`, {}, 13000);
+      if (!Array.isArray(r.elements)) continue;
+      return sortByDistance(r.elements.map(overpassPlace).filter((p) => p.loc.lat != null), center);
+    } catch { /* try next server */ }
+  }
+  // Fallback: Photon, restricted to the OSM tag and a box around the centre
+  const tag = /\[(\w+)=([\w:]+)\]/.exec(filter);
+  const d = radius / 111000, dl = d / Math.cos((center.lat * Math.PI) / 180);
+  const qs = new URLSearchParams({ q: word || (tag ? tag[2] : 'Ort'), lang: 'de', limit: '30', lat: center.lat, lon: center.lng,
+    bbox: [center.lng - dl, center.lat - d, center.lng + dl, center.lat + d].map((x) => x.toFixed(5)).join(',') });
+  if (tag) qs.set('osm_tag', `${tag[1]}:${tag[2]}`);
+  const r = await getJSON(`https://photon.komoot.io/api/?${qs}`);
+  return sortByDistance((r.features || []).map(photonPlace), center);
+}
+const sortByDistance = (list, c) => list.sort((a, b) => distance(c, a.loc) - distance(c, b.loc));
 
 /* ------------------------------------------------------------ routing */
 const PROFILE = { DRIVE: 'routed-car', BICYCLE: 'routed-bike', WALK: 'routed-foot' };
