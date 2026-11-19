@@ -1,101 +1,31 @@
-# Karten – Karten- & Navigations-App mit Live-Verkehr
+# Einsatzzentrale
 
-Eine Handy-App (iOS & Android, Expo / React Native) im Stil der großen Karten-Apps:
-Vollbildkarte, Suche im Bottom-Sheet, Ortsdetails, Routenplanung mit Alternativen und
-Turn-by-Turn-Navigation mit Sprachansagen. **Verkehrsstörungen (Staus, stockender Verkehr)
-werden live über die Google APIs geladen.**
+Ein Leitstellen-Spiel für das iPhone (Web-App im Liquid-Glass-Design). Du baust Wachen auf einer
+echten Karte, kaufst Fahrzeuge und disponierst eingehende Notrufe.
 
-## iPhone ohne PC: Web-App (Ordner `docs/`)
+**Spielen:** https://levilive124.github.io/App/ – in Safari öffnen → Teilen → *Zum Home-Bildschirm*.
 
-Im Ordner `docs/` liegt dieselbe App als Web-App für Safari (Google Maps JS + Places/Routes API).
-Sie wird über GitHub Pages veröffentlicht und per **Teilen → Zum Home-Bildschirm** wie eine App installiert.
-Der Google-Schlüssel wird direkt in der App eingegeben und nur auf dem Gerät gespeichert.
+## Spielablauf
+1. Startort wählen (eigener Standort oder Stadt suchen).
+2. Erste Feuerwache bauen (gratis) – jede Wache bringt ein Fahrzeug mit.
+3. Notrufe erscheinen auf der Karte. Einsatz antippen → **Vorschlag** wählt die nächsten passenden
+   Fahrzeuge → **Alarmieren**.
+4. Fahrzeuge fahren auf echten Straßen hin (Status 3), arbeiten vor Ort (Status 4), bringen Patienten
+   ins Krankenhaus (Status 7/8) und fahren zurück (Status 1 → 2).
+5. Credits verdienen, Level aufsteigen, neue Wachen, Fahrzeuge und größere Einsätze freischalten.
 
-1. GitHub → Repo → **Settings → General → Danger Zone → Change visibility → Public** (kostenloses Pages geht nur bei öffentlichen Repos; im Code steckt kein Schlüssel).
-2. **Settings → Pages** → Source „Deploy from a branch“ → Branch `claude/gracious-darwin-q1ovh2`, Ordner `/docs` → Save.
-3. Nach 1–2 Minuten `https://levilive124.github.io/app/` in Safari öffnen.
+Inhalt: 4 Gebäudetypen, 11 Fahrzeugtypen, 33 Einsatzarten (Feuerwehr, Rettungsdienst, Polizei),
+Spielgeschwindigkeit 1×/2×/5×, Pause, Töne, automatisches Speichern auf dem Gerät.
 
-## Funktionen
+## Technik
+Reines HTML/CSS/JavaScript im Ordner `docs/`, ausgeliefert über GitHub Pages (Branch `gh-pages`).
+Kostenlose Dienste ohne Schlüssel: Karte OpenFreeMap/OpenStreetMap (MapLibre GL), Routen OSRM
+(routing.openstreetmap.de), Adressen Photon.
 
-| Bereich | Was drin ist |
+| Datei | Inhalt |
 |---|---|
-| Karte | Apple Karten (MapKit) auf iOS, Google Maps auf Android (optional Google auch auf iOS), Standard / Hybrid / Satellit / Gelände, 3D-Gebäude & Neigung, Dark-Mode, Kompass, Maßstab |
-| Live-Verkehr | Verkehrsfluss-Ebene (grün/orange/rot), Route selbst nach Verkehr eingefärbt |
-| **Verkehrsstörungen** | Stau-Marker auf der Karte mit Verzögerung, Liste „Verkehrslage“ für den sichtbaren Bereich, Störungen auf der Route, Detailansicht (Länge, Verzögerung, Ø-Tempo, Richtung, Straße) |
-| Suche | Google Places Autocomplete, Textsuche, Kategorien (Tankstellen, Laden, Restaurants, Parken …), Verlauf |
-| Orte | Fotos, Bewertung, Öffnungszeiten, Telefon, Website, Teilen, Street View, Pin per Long-Press |
-| Favoriten | Zuhause, Arbeit (ein Tipp = Route), beliebige Favoriten (lange drücken = entfernen) |
-| Routen | Auto, ÖPNV (Linien, Abfahrten, Haltestellen), zu Fuß, Fahrrad, Motorrad; Alternativen; Maut/Autobahn/Fähren vermeiden; Ankunftszeit inkl. Verkehr |
-| Navigation | Manöver-Banner, „Dann …“-Vorschau, Sprachansagen (Deutsch), Stau-Warnung voraus, automatische Neuberechnung bei Abweichung, Verkehrs-Update alle 2 Min., Display bleibt an |
+| `docs/game.js` | Spiellogik, Karte, Oberfläche |
+| `docs/data.js` | Fahrzeuge, Gebäude, Einsätze |
+| `docs/style.css` | Liquid-Glass-Design |
 
-## Woher kommen die Verkehrsstörungen?
-
-Google bietet keine öffentliche „Incident“-Liste an. Die App nutzt deshalb die
-**Google Routes API** (`computeRoutes` mit `TRAFFIC_AWARE_OPTIMAL` und
-`extraComputations: TRAFFIC_ON_POLYLINE`). Jede Antwort enthält `speedReadingIntervals`,
-die zeigen, wo auf der Strecke gerade `SLOW` oder `TRAFFIC_JAM` herrscht. Daraus macht
-`src/traffic/incidents.ts`:
-
-1. **Auf deiner Route:** zusammenhängende Stau-Abschnitte → Position, Länge, Entfernung,
-   geschätzte Verzögerung (Gesamtverzögerung `duration − staticDuration`, gewichtet verteilt).
-2. **In der Umgebung:** Für den sichtbaren Kartenausschnitt werden 16 Testrouten
-   (8 Himmelsrichtungen, jeweils hin und zurück) abgefragt; Störungen werden zusammengeführt
-   und dedupliziert. Ergebnis wird 3 Minuten gecacht.
-3. **Straßennamen** kommen über die Geocoding API.
-
-Zusätzlich zeigt die Karte Googles Live-Verkehrsebene (`showsTraffic`).
-
-## Einrichtung
-
-### 1. Google API-Schlüssel
-
-In der [Google Cloud Console](https://console.cloud.google.com/google/maps-apis) ein Projekt
-anlegen, Abrechnung aktivieren und diese APIs einschalten:
-
-- Maps SDK for Android (und Maps SDK for iOS, falls Google auch auf iOS genutzt wird)
-- Places API (New)
-- Routes API
-- Geocoding API
-
-```bash
-cp .env.example .env
-# GOOGLE_MAPS_API_KEY=AIza... eintragen
-```
-
-> **Tipp:** Schlüssel in der Console auf die App einschränken (Android: Paketname
-> `com.levilive.karten` + SHA-1, iOS: Bundle-ID). Die App sendet die passenden
-> `X-Android-Package`/`X-Ios-Bundle-Identifier`-Header mit; für Android den SHA-1 in
-> `ANDROID_CERT_SHA1` eintragen.
-
-**Kosten:** Die Umgebungs-Verkehrsabfrage kostet pro Scan bis zu 16 Routes-API-Anfragen.
-Sie startet nur bei aktivierten „Verkehrsstörungen“ und ausreichend Zoom und wird gecacht.
-Über den Stau-Button rechts lässt sie sich abschalten.
-
-### 2. Starten
-
-```bash
-npm install
-npx expo run:android      # oder: npx expo run:ios
-```
-
-Weil `react-native-maps` mit Google-Schlüssel nativen Code braucht, läuft die App als
-**Development Build** (nicht in Expo Go). Ohne lokales Xcode/Android Studio per EAS:
-
-```bash
-npx eas-cli@latest build --profile development --platform android   # bzw. ios
-npx expo start --dev-client
-```
-
-Installierbare Test-APK: `npx eas-cli@latest build --profile preview --platform android`.
-
-## Projektstruktur
-
-```
-App.tsx                      Karte, Zustände, Kamera, Bottom-Sheet-Inhalte
-src/api/google.ts            Places (New), Routes API, Geocoding
-src/traffic/incidents.ts     Stau-Erkennung aus speedReadingIntervals, Umgebungs-Scan
-src/hooks/useNavigation.ts   Turn-by-Turn-Logik, Sprachansagen, Neuberechnung
-src/hooks/useLocation.ts     GPS
-src/components/              BottomSheet, Suche, Ort, Route, Navigation, Ebenen, Störung
-src/utils/                   Geo-Mathe, Polyline-Decoder, Formatierung, Manöver-Icons
-```
+Die frühere Karten-App ist in der Git-Historie erhalten (Commit `2b261b4`).
