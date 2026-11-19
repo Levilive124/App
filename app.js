@@ -1,7 +1,9 @@
 import {
   KIND, autocomplete, computeRoutes, distance, esc, fmtClock, fmtDist, fmtDur, incidentsOnRoute,
   nearby, pathLength, placeExtras, reverse, snapToPath, trafficGermany,
-} from './lib.js';
+} from './lib.js?v=5';
+
+const APP_VERSION = '5';
 
 /* =================================================================== state */
 const $ = (id) => document.getElementById(id);
@@ -618,7 +620,7 @@ function homeBody() {
     }
   }
   if (S.recents.length) h += '<div class="section"><h3>Zuletzt gesucht</h3></div>' + S.recents.map((r, i) => row({ icon: 'schedule', bg: '#8E8E93', t: r.name, s: r.address, action: 'recent', data: { i } })).join('');
-  h += `<p class="empty" style="font-size:12px;margin-top:20px">Karten: © OpenStreetMap-Mitwirkende, OpenFreeMap · Suche: Photon · Routen: OSRM · Verkehr: Autobahn GmbH</p>`;
+  h += `<p class="empty" style="font-size:12px;margin-top:20px">Karten: © OpenStreetMap-Mitwirkende, OpenFreeMap · Suche: Photon · Routen: OSRM · Verkehr: Autobahn GmbH<br>Version ${APP_VERSION}</p>`;
   return h;
 }
 
