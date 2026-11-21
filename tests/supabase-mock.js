@@ -46,6 +46,7 @@ const __mock = (function () {
       return cid;
     }
     if (name === 'toggle_pin') { const m = T.messages.find((x) => x.id === a.mid); m.pinned = !m.pinned; emit('messages', 'UPDATE', m); return m.pinned; }
+    if (name === 'login_email') { const pr = T.profiles.find((x) => x.username === a.u); return pr ? users.find((x) => x.id === pr.id)?.email || null : null; }
     if (name === 'username_available') return !T.profiles.some((p) => p.username === a.u);
     if (name === 'reset_invite') { const s = T.servers.find((x) => x.id === a.sid); s.invite_code = Math.random().toString(36).slice(2, 10); return s.invite_code; }
     throw new Error('unknown rpc ' + name);

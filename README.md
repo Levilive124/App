@@ -8,7 +8,7 @@ Funktionen, die anderswo ein Abo kosten, sind hier **gratis**.
 
 | Bereich | Enthalten |
 |---|---|
-| Konto | Registrierung (E-Mail + Passwort, eigener Benutzername), Anmeldung, Passwort vergessen/ändern, Abmelden |
+| Konto | Registrierung und Anmeldung nur mit **Benutzername + Passwort** (keine E-Mail, keine Bestätigung), Passwort ändern, Abmelden |
 | Profil | Anzeigename, Benutzername, „Über mich“ (Markdown), Profilfarbe, **Profilbild & Banner (auch animierte GIFs)**, Status (Online/Abwesend/Bitte nicht stören/Unsichtbar), eigener Statustext |
 | Freunde | Anfragen senden/annehmen/ablehnen, Online-/Alle-/Ausstehend-Listen, Profilkarten mit gemeinsamen Servern |
 | Server | Erstellen (Name, Farbe, Bild), Einladungslinks & Codes (mit Vorschau), neuen Link erzeugen, Beitreten, Verlassen, Löschen |
@@ -35,9 +35,10 @@ Funktionen, die anderswo ein Abo kosten, sind hier **gratis**.
    - `VITE_SUPABASE_ANON_KEY` = anon public Schlüssel
 3. **Deploy** – fertig. Jeder neue Commit wird automatisch veröffentlicht.
 
-### 3. Supabase mit der Website verbinden
-**Authentication → URL Configuration**: *Site URL* = deine Vercel-Adresse (z. B. `https://lumo-xyz.vercel.app`),
-damit Bestätigungs- und Passwort-Links auf deine Seite führen.
+### 3. E-Mail-Bestätigung ausschalten
+**Authentication → Sign In / Providers → Email**: **„Confirm email“ ausschalten** → Save.
+Lumo nutzt nur Benutzername + Passwort; intern bekommt jedes Konto eine Platzhalter-Adresse
+(`…@lumoapp.vercel.app`), an die nie etwas gesendet wird.
 
 > Den **service_role**-Schlüssel niemals eintragen. Der anon-Schlüssel ist öffentlich; die Daten schützen die
 > Sicherheitsregeln (Row Level Security) im Schema.

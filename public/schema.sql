@@ -193,6 +193,13 @@ language sql stable security definer set search_path = public as $$
   select not exists(select 1 from profiles where username = lower(trim(u)))
 $$;
 
+-- log in with a username: returns the account's private placeholder e-mail (only that kind of address)
+create or replace function public.login_email(u text) returns text
+language sql stable security definer set search_path = public, auth as $$
+  select au.email from auth.users au join public.profiles p on p.id = au.id
+  where p.username = lower(trim(u)) and au.email like '%@lumoapp.vercel.app'
+$$;
+
 -- preview a server before joining
 create or replace function public.invite_info(code text) returns table (id uuid, name text, icon_url text, color text, members bigint)
 language sql stable security definer set search_path = public as $$
@@ -380,3 +387,5 @@ grant usage on schema public to authenticated;
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant execute on all functions in schema public to authenticated;
 grant execute on function public.username_available(text) to anon;
+grant execute on function public.login_email(text) to anon;
+revoke execute on function public.login_email(text) from public;

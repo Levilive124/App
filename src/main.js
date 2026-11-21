@@ -180,54 +180,56 @@ function renderSetup(err) {
 }
 
 /* ----------------------------------------------------------------- auth */
+// Accounts use username + password only. Supabase needs an e-mail internally, so each account gets a
+// private placeholder address on a domain without a mailbox; nothing is ever sent to it.
+const LOGIN_DOMAIN = 'lumoapp.vercel.app';
+const placeholderEmail = (username) => `${username}.${Math.random().toString(36).slice(2, 8)}@${LOGIN_DOMAIN}`;
+
 function renderAuth(mode, note) {
-  const reg = mode === 'register', forgot = mode === 'forgot';
+  const reg = mode === 'register';
   $('root').innerHTML = `<div class="center scroll"><form class="auth glass" id="authForm" data-mode="${mode}" novalidate>
-    <div class="brand"><img src="/icon-192.png" alt=""><div><h1>${reg ? 'Konto erstellen' : forgot ? 'Passwort vergessen' : 'Willkommen zurück!'}</h1>
-    <p class="sub">${reg ? 'Server, Freunde, Sprachchat – alles an einem Ort.' : forgot ? 'Wir schicken dir einen Link zum Zurücksetzen.' : 'Schön, dich wiederzusehen.'}</p></div></div>
+    <div class="brand"><img src="/icon-192.png" alt=""><div><h1>${reg ? 'Konto erstellen' : 'Willkommen zurück!'}</h1>
+    <p class="sub">${reg ? 'Nur Benutzername und Passwort – keine E-Mail nötig.' : 'Schön, dich wiederzusehen.'}</p></div></div>
     ${note ? `<p class="note">${note}</p>` : ''}
-    <label class="field"><span>E-Mail</span><input name="email" type="email" autocomplete="email" required autocapitalize="off"></label>
-    ${reg ? `<label class="field"><span>Anzeigename</span><input name="display" autocomplete="nickname" maxlength="40" placeholder="So sehen dich andere"></label>
-    <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" autocapitalize="off" maxlength="32" placeholder="klein, ohne Leerzeichen" pattern="[a-z0-9_.]{2,32}" required></label>` : ''}
-    ${forgot ? '' : `<label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" minlength="6" required></label>`}
-    ${reg ? `<label class="check-row"><input type="checkbox" name="terms" required><span>Ich bin mindestens 13 Jahre alt und verhalte mich respektvoll.</span></label>` : ''}
-    <button class="btn primary" type="submit">${reg ? 'Registrieren' : forgot ? 'Link senden' : 'Anmelden'}</button>
-    <div class="auth-links">
-      ${mode !== 'login' ? '<a data-action="auth-mode" data-mode="login">Schon ein Konto? Anmelden</a>' : '<a data-action="auth-mode" data-mode="register">Neu hier? Konto erstellen</a>'}
-      ${mode === 'login' ? '<a data-action="auth-mode" data-mode="forgot">Passwort vergessen?</a>' : ''}
-    </div>
+    ${reg ? `<label class="field"><span>Anzeigename</span><input name="display" autocomplete="nickname" maxlength="40" placeholder="So sehen dich andere"></label>` : ''}
+    <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" placeholder="${reg ? 'klein, ohne Leerzeichen' : 'dein Benutzername'}" required></label>
+    <label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" minlength="6" required></label>
+    ${reg ? `<label class="field"><span>Passwort wiederholen</span><input name="password2" type="password" autocomplete="new-password" minlength="6" required></label>
+    <label class="check-row"><input type="checkbox" name="terms" required><span>Ich bin mindestens 13 Jahre alt und verhalte mich respektvoll.</span></label>` : ''}
+    <button class="btn primary" type="submit">${reg ? 'Registrieren' : 'Anmelden'}</button>
+    <div class="auth-links">${reg ? '<a data-action="auth-mode" data-mode="login">Schon ein Konto? Anmelden</a>' : '<a data-action="auth-mode" data-mode="register">Neu hier? Konto erstellen</a>'}</div>
+    ${reg ? '<p class="hint">Merk dir dein Passwort gut – ohne E-Mail lässt es sich nicht per Link zurücksetzen.</p>' : ''}
     ${CFG.fixed ? '' : '<a class="tiny-link" data-action="reset-cfg">Server-Verbindung ändern</a>'}
   </form></div>`;
   const f = $('authForm');
   f.addEventListener('submit', (e) => { e.preventDefault(); submitAuth(f); });
-  if (reg) f.username.addEventListener('input', () => { f.username.value = f.username.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''); });
+  f.username.addEventListener('input', () => { f.username.value = f.username.value.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_.]/g, ''); });
 }
 async function submitAuth(f) {
   const mode = f.dataset.mode, btn = f.querySelector('button[type=submit]');
-  const email = f.email.value.trim();
-  if (!/^\S+@\S+\.\S+$/.test(email)) return toast(`${ms('error')} Bitte eine gültige E-Mail eingeben.`, 'err');
+  const username = f.username.value.trim().toLowerCase(), password = f.password.value;
+  if (!/^[a-z0-9_.]{2,32}$/.test(username)) return toast(`${ms('error')} Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt und Unterstrich.`, 'err');
+  if (password.length < 6) return toast(`${ms('error')} Das Passwort muss mindestens 6 Zeichen haben.`, 'err');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
   try {
     if (mode === 'login') {
-      const { error } = await sb.auth.signInWithPassword({ email, password: f.password.value });
-      if (error) throw error; LS.set('seenLogin', true);
-    } else if (mode === 'register') {
-      const username = f.username.value.trim();
-      if (!/^[a-z0-9_.]{2,32}$/.test(username)) throw new Error('Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt und Unterstrich.');
-      if (f.password.value.length < 6) throw new Error('Das Passwort muss mindestens 6 Zeichen haben.');
+      const { data: email, error: e1 } = await sb.rpc('login_email', { u: username });
+      if (e1) throw e1;
+      if (!email) throw new Error('Benutzername oder Passwort ist falsch.');
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw /Invalid login/i.test(error.message) ? new Error('Benutzername oder Passwort ist falsch.') : error;
+      LS.set('seenLogin', true);
+    } else {
+      if (password !== f.password2.value) throw new Error('Die Passwörter stimmen nicht überein.');
       if (!f.terms.checked) throw new Error('Bitte bestätige die Hinweise.');
       const { data: free, error: uErr } = await sb.rpc('username_available', { u: username });
       if (!uErr && free === false) throw new Error('Dieser Benutzername ist schon vergeben.');
-      const { data, error } = await sb.auth.signUp({ email, password: f.password.value, options: { data: { username, display_name: f.display.value.trim() || username }, emailRedirectTo: appUrl() } });
+      const { data, error } = await sb.auth.signUp({ email: placeholderEmail(username), password, options: { data: { username, display_name: f.display.value.trim() || username } } });
       if (error) throw error;
       LS.set('seenLogin', true);
-      if (!data.session) return renderAuth('login', `${ms('mark_email_read')} Fast geschafft! Wir haben dir eine E-Mail an <b>${esc(email)}</b> geschickt. Tippe auf den Link darin und melde dich dann hier an.`);
-    } else {
-      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
-      if (error) throw error;
-      return renderAuth('login', `${ms('mark_email_read')} Falls ein Konto existiert, ist ein Link zum Zurücksetzen unterwegs.`);
+      if (!data.session) return renderAuth('login', `${ms('info')} Konto erstellt, aber die Anmeldung ist noch gesperrt: In Supabase muss unter <b>Authentication → Sign In / Providers → Email</b> die Option <b>„Confirm email“</b> ausgeschaltet sein.`);
     }
-  } catch (e) { fail(e); btn.disabled = false; btn.textContent = mode === 'login' ? 'Anmelden' : mode === 'register' ? 'Registrieren' : 'Link senden'; }
+  } catch (e) { fail(e); btn.disabled = false; btn.textContent = mode === 'login' ? 'Anmelden' : 'Registrieren'; }
 }
 function renderRecovery() {
   $('root').innerHTML = `<div class="center"><form class="auth glass" id="recForm"><div class="brand"><img src="/icon-192.png" alt=""><div><h1>Neues Passwort</h1><p class="sub">Wähle ein neues Passwort für dein Konto.</p></div></div>
@@ -1221,11 +1223,11 @@ function settingsModal(tab = 'profile') {
       <label class="field"><span>Über mich</span><textarea name="bio" maxlength="300" rows="3" placeholder="Erzähl etwas über dich (Markdown möglich)">${esc(me.bio)}</textarea></label>
       <label class="field"><span>Profilfarbe</span><input type="color" name="accent" value="${esc(me.accent)}"></label>
       <button class="btn primary">Speichern</button></form>`,
-    account: `<div class="mform"><div class="kv"><small>E-Mail</small><b>${esc(st.session.user.email)}</b></div>
+    account: `<div class="mform"><div class="kv"><small>Angemeldet als</small><b>@${esc(st.me.username)}</b></div>
       <form id="pwForm" class="mform"><label class="field"><span>Neues Passwort</span><input name="pw" type="password" minlength="6" autocomplete="new-password"></label><button class="btn sec">Passwort ändern</button></form>
       <button class="btn sec" data-action="logout">${ms('logout')} Abmelden</button>
       ${CFG.fixed ? '' : `<button class="btn sec" data-action="copy" data-text="${esc(appUrl() + '#' + cfgHash())}">${ms('link')} App-Link mit Server-Verbindung kopieren</button>`}
-      <h3 class="msub danger-t">Konto löschen</h3><p class="dim small">Zum endgültigen Löschen deines Kontos wende dich an den Betreiber dieses Lumo-Servers. Du kannst alle Server verlassen und dein Profil leeren.</p></div>`,
+      <p class="dim small">Wenn du deinen Benutzernamen änderst, meldest du dich danach mit dem neuen Namen an.</p></div>`,
     look: `<div class="mform"><div class="seg3">${[['auto', 'Automatisch'], ['dark', 'Dunkel'], ['light', 'Hell']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-action="set-theme" data-v="${k}">${l}</button>`).join('')}</div>
       <label class="opt"><span>Kompakte Nachrichten</span><span class="switch"><input type="checkbox" data-set="compact" ${s.compact ? 'checked' : ''}><span></span></span></label>
       <label class="field"><span>Schriftgröße: <b id="fsVal">${s.fontSize}px</b></span><input type="range" min="13" max="19" value="${s.fontSize}" data-set="fontSize"></label></div>`,
