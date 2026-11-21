@@ -389,3 +389,16 @@ grant execute on all functions in schema public to authenticated;
 grant execute on function public.username_available(text) to anon;
 grant execute on function public.login_email(text) to anon;
 revoke execute on function public.login_email(text) from public;
+
+-- ------------------------------------------------- username-only accounts
+-- Accounts use a placeholder e-mail on @lumoapp.vercel.app (no mailbox). They never need confirming:
+-- confirm them on creation and unlock any created before this ran.
+create or replace function public.autoconfirm_placeholder() returns trigger
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  if new.email like '%@lumoapp.vercel.app' and new.email_confirmed_at is null then new.email_confirmed_at := now(); end if;
+  return new;
+end $$;
+drop trigger if exists autoconfirm_placeholder on auth.users;
+create trigger autoconfirm_placeholder before insert on auth.users for each row execute function public.autoconfirm_placeholder();
+update auth.users set email_confirmed_at = now() where email like '%@lumoapp.vercel.app' and email_confirmed_at is null;
