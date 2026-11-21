@@ -34,6 +34,8 @@ function germanError(e) {
     [/Failed to fetch|NetworkError|Load failed/i, 'Keine Verbindung zum Server.'],
     [/JWT expired/i, 'Sitzung abgelaufen – bitte neu anmelden.'],
     [/Payload too large|exceeded the maximum/i, 'Datei ist zu groß.'],
+    [/Error sending (confirmation|recovery|magic link|email change).*email/i, 'Die E-Mail konnte gerade nicht verschickt werden. Bitte später erneut versuchen.'],
+    [/email rate limit|over_email_send_rate_limit/i, 'Gerade wurden zu viele E-Mails verschickt – bitte in ein paar Minuten erneut versuchen.'],
   ];
   for (const [re, t] of map) if (re.test(m)) return t;
   return m;
