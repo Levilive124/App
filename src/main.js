@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import './style.css';
 
 // Set these in Vercel → Project → Settings → Environment Variables (or a local .env file).
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://euaekvydqxnvjpolszvk.supabase.co';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 const VERSION = '1.0';
@@ -172,7 +172,7 @@ function renderSetup(err) {
       <li><b>Authentication → URL Configuration</b>: bei <b>Site URL</b> eintragen:<code class="copy" data-action="copy" data-text="${esc(appUrl())}">${esc(appUrl())}</code></li>
       <li><b>Project Settings → API</b>: <b>Project URL</b> und den <b>anon public</b> Schlüssel kopieren und hier einfügen:</li>
     </ol>
-    <label class="field"><span>Project URL</span><input id="cfgUrl" placeholder="https://xxxx.supabase.co" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+    <label class="field"><span>Project URL</span><input id="cfgUrl" value="${esc(SUPABASE_URL)}" placeholder="https://xxxx.supabase.co" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <label class="field"><span>anon public Key</span><input id="cfgKey" placeholder="eyJhbGciOi…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <button class="btn primary" data-action="save-cfg">${ms('link')} Verbinden</button>
     <p class="hint">Niemals den <b>service_role</b>-Schlüssel eintragen. Der anon-Schlüssel ist öffentlich – die Daten schützt das Datenbank-Schema.</p>
