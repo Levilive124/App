@@ -23,6 +23,7 @@ const __mock = (function () {
   window.__mock = {
     T, users, miaId,
     asMia(content, target) { return insertRow('messages', { author_id: miaId, content, ...target }); },
+    confirmAll() { users.forEach((u) => (u.confirmed = true)); },
     friendRequestFromMia(to) { return insertRow('friendships', { requester: miaId, addressee: to }); },
   };
 
@@ -46,7 +47,7 @@ const __mock = (function () {
       return cid;
     }
     if (name === 'toggle_pin') { const m = T.messages.find((x) => x.id === a.mid); m.pinned = !m.pinned; emit('messages', 'UPDATE', m); return m.pinned; }
-    if (name === 'login_email') { const pr = T.profiles.find((x) => x.username === a.u); return pr ? users.find((x) => x.id === pr.id)?.email || null : null; }
+    if (name === 'login_email') { const pr = T.profiles.find((x) => x.username === a.u); const us = pr && users.find((x) => x.id === pr.id); return us && us.password === a.pw ? us.email : null; }
     if (name === 'username_available') return !T.profiles.some((p) => p.username === a.u);
     if (name === 'reset_invite') { const s = T.servers.find((x) => x.id === a.sid); s.invite_code = Math.random().toString(36).slice(2, 10); return s.invite_code; }
     throw new Error('unknown rpc ' + name);
@@ -133,16 +134,19 @@ const __mock = (function () {
           onAuthStateChange: (cb) => { authCbs.push(cb); return { data: { subscription: { unsubscribe() {} } } }; },
           signUp: async ({ email, password, options }) => {
             if (users.some((u) => u.email === email)) return { data: {}, error: { message: 'User already registered' } };
-            const id = addUser(email, password, options.data); const s = { user: { id, email } }; setSession(s, 'SIGNED_IN'); return { data: { session: s }, error: null };
+            const id = addUser(email, password, options.data); users.find((u) => u.id === id).confirmed = false;
+            return { data: { session: null, user: { id, email, identities: [{}] } }, error: null };
           },
           signInWithPassword: async ({ email, password }) => {
             const u = users.find((x) => x.email === email && x.password === password);
             if (!u) return { error: { message: 'Invalid login credentials' } };
+            if (u.confirmed === false) return { error: { message: 'Email not confirmed' } };
             const s = { user: { id: u.id, email } }; setSession(s, 'SIGNED_IN'); return { data: { session: s }, error: null };
           },
           signOut: async () => { setSession(null, 'SIGNED_OUT'); return { error: null }; },
           updateUser: async () => ({ data: {}, error: null }),
           resetPasswordForEmail: async () => ({ error: null }),
+          resend: async () => ({ error: null }),
         },
         from: (t) => new Q(t),
         rpc: async (n, a) => { try { return { data: rpc(n, a), error: null }; } catch (e) { return { data: null, error: { message: e.message } }; } },

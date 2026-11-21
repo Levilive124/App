@@ -3,7 +3,9 @@ import './style.css';
 
 // Set these in Vercel → Project → Settings → Environment Variables (or a local .env file).
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://euaekvydqxnvjpolszvk.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+// Publishable ("anon") key: meant to be public – every browser client needs it. The data is protected by
+// the row-level security rules in supabase/schema.sql, not by keeping this key secret.
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_G7441Hv11YHHCbaa5N54tg_BytyRo42';
 
 const VERSION = '1.0';
 /* =============================================================== utils */
@@ -51,17 +53,9 @@ const initials = (n) => (n || '?').trim().split(/\s+/).map((x) => x[0]).slice(0,
 function hueOf(id) { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 /* ======================================================= configuration */
-function readConfig() {
-  const m = /[#&]cfg=([^&]+)/.exec(location.hash);
-  if (m) {
-    try { const c = JSON.parse(atob(decodeURIComponent(m[1]))); if (c.u && c.k) LS.set('cfg', c); } catch {}
-    history.replaceState(null, '', location.pathname + location.search + location.hash.replace(/[#&]?cfg=[^&]+/, '').replace(/^#?&/, '#'));
-  }
-  if (SUPABASE_URL && SUPABASE_ANON_KEY) return { u: SUPABASE_URL, k: SUPABASE_ANON_KEY, fixed: true };
-  return LS.get('cfg', null);
-}
-const CFG = readConfig();
-const cfgHash = () => (CFG && !CFG.fixed ? `cfg=${encodeURIComponent(btoa(JSON.stringify({ u: CFG.u, k: CFG.k })))}` : '');
+// The server connection is fixed at build time and cannot be changed or viewed from inside the app.
+const CFG = { u: SUPABASE_URL, k: SUPABASE_ANON_KEY, fixed: true };
+try { localStorage.removeItem('lumo.cfg'); } catch {}
 const appUrl = () => location.origin + location.pathname;
 let sb = null;
 
@@ -148,7 +142,6 @@ const QUICK = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
 async function boot() {
   applySettings();
   document.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
-  if (!CFG) return renderSetup();
   sb = createClient(CFG.u, CFG.k, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   const { data: { session } } = await sb.auth.getSession();
   sb.auth.onAuthStateChange((evt, s) => {
@@ -161,75 +154,89 @@ async function boot() {
 function renderFatal(msg) { $('root').innerHTML = `<div class="center"><div class="auth glass"><h1>Lumo</h1><p>${esc(msg)}</p></div></div>`; }
 
 /* ---------------------------------------------------------------- setup */
-function renderSetup(err) {
-  $('root').innerHTML = `<div class="center scroll"><div class="auth glass wide">
-    <div class="brand"><img src="/icon-192.png" alt=""><div><h1>Lumo einrichten</h1><p class="sub">Einmalig: Server verbinden (kostenlos über Supabase)</p></div></div>
-    ${err ? `<p class="err">${esc(err)}</p>` : ''}
-    <ol class="steps">
-      <li><a href="https://supabase.com/dashboard/sign-up" target="_blank" rel="noopener">Supabase-Konto erstellen</a> und <b>New project</b> anlegen (Name z. B. „lumo“, Region Frankfurt, Passwort ausdenken).</li>
-      <li>Im Projekt links <b>SQL Editor</b> öffnen, Code mit dem Knopf unten kopieren, einfügen und <b>Run</b> tippen.
-        <button class="btn sec" data-action="copy-sql">${ms('content_copy')} Datenbank-Code kopieren</button></li>
-      <li><b>Authentication → URL Configuration</b>: bei <b>Site URL</b> eintragen:<code class="copy" data-action="copy" data-text="${esc(appUrl())}">${esc(appUrl())}</code></li>
-      <li><b>Project Settings → API</b>: <b>Project URL</b> und den <b>anon public</b> Schlüssel kopieren und hier einfügen:</li>
-    </ol>
-    <label class="field"><span>Project URL</span><input id="cfgUrl" value="${esc(SUPABASE_URL)}" placeholder="https://xxxx.supabase.co" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-    <label class="field"><span>anon public Key</span><input id="cfgKey" placeholder="eyJhbGciOi…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-    <button class="btn primary" data-action="save-cfg">${ms('link')} Verbinden</button>
-    <p class="hint">Niemals den <b>service_role</b>-Schlüssel eintragen. Der anon-Schlüssel ist öffentlich – die Daten schützt das Datenbank-Schema.</p>
-  </div></div>`;
-}
-
 /* ----------------------------------------------------------------- auth */
-// Accounts use username + password only. Supabase needs an e-mail internally, so each account gets a
-// private placeholder address on a domain without a mailbox; nothing is ever sent to it.
-const LOGIN_DOMAIN = 'lumoapp.vercel.app';
-const placeholderEmail = (username) => `${username}.${Math.random().toString(36).slice(2, 8)}@${LOGIN_DOMAIN}`;
-
+// Sign-up with username, e-mail and password; the e-mail gets a confirmation link.
+// Log-in works with the username or the e-mail address.
 function renderAuth(mode, note) {
-  const reg = mode === 'register';
+  const reg = mode === 'register', forgot = mode === 'forgot';
+  const title = reg ? 'Konto erstellen' : forgot ? 'Passwort vergessen' : 'Willkommen zurück!';
+  const sub = reg ? 'Server, Freunde, Sprach- und Videochat – alles gratis.' : forgot ? 'Wir schicken dir einen Link zum Zurücksetzen.' : 'Schön, dich wiederzusehen.';
   $('root').innerHTML = `<div class="center scroll"><form class="auth glass" id="authForm" data-mode="${mode}" novalidate>
-    <div class="brand"><img src="/icon-192.png" alt=""><div><h1>${reg ? 'Konto erstellen' : 'Willkommen zurück!'}</h1>
-    <p class="sub">${reg ? 'Nur Benutzername und Passwort – keine E-Mail nötig.' : 'Schön, dich wiederzusehen.'}</p></div></div>
+    <div class="brand"><img src="/icon-192.png" alt=""><div><h1>${title}</h1><p class="sub">${sub}</p></div></div>
     ${note ? `<p class="note">${note}</p>` : ''}
-    ${reg ? `<label class="field"><span>Anzeigename</span><input name="display" autocomplete="nickname" maxlength="40" placeholder="So sehen dich andere"></label>` : ''}
-    <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" placeholder="${reg ? 'klein, ohne Leerzeichen' : 'dein Benutzername'}" required></label>
-    <label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" minlength="6" required></label>
+    ${reg ? `<label class="field"><span>E-Mail</span><input name="email" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" required></label>
+      <label class="field"><span>Anzeigename</span><input name="display" autocomplete="nickname" maxlength="40" placeholder="So sehen dich andere"></label>
+      <label class="field"><span>Benutzername</span><input name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" placeholder="klein, ohne Leerzeichen" required></label>` : ''}
+    ${mode === 'login' ? `<label class="field"><span>Benutzername oder E-Mail</span><input name="ident" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required></label>` : ''}
+    ${forgot ? `<label class="field"><span>E-Mail</span><input name="email" type="email" autocomplete="email" autocapitalize="off" required></label>` : ''}
+    ${forgot ? '' : `<label class="field"><span>Passwort</span><input name="password" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" minlength="6" required></label>`}
     ${reg ? `<label class="field"><span>Passwort wiederholen</span><input name="password2" type="password" autocomplete="new-password" minlength="6" required></label>
     <label class="check-row"><input type="checkbox" name="terms" required><span>Ich bin mindestens 13 Jahre alt und verhalte mich respektvoll.</span></label>` : ''}
-    <button class="btn primary" type="submit">${reg ? 'Registrieren' : 'Anmelden'}</button>
-    <div class="auth-links">${reg ? '<a data-action="auth-mode" data-mode="login">Schon ein Konto? Anmelden</a>' : '<a data-action="auth-mode" data-mode="register">Neu hier? Konto erstellen</a>'}</div>
-    ${reg ? '<p class="hint">Merk dir dein Passwort gut – ohne E-Mail lässt es sich nicht per Link zurücksetzen.</p>' : ''}
-    ${CFG.fixed ? '' : '<a class="tiny-link" data-action="reset-cfg">Server-Verbindung ändern</a>'}
+    <button class="btn primary" type="submit">${reg ? 'Registrieren' : forgot ? 'Link senden' : 'Anmelden'}</button>
+    <div class="auth-links">
+      ${mode !== 'login' ? '<a data-action="auth-mode" data-mode="login">Schon ein Konto? Anmelden</a>' : '<a data-action="auth-mode" data-mode="register">Neu hier? Konto erstellen</a>'}
+      ${mode === 'login' ? '<a data-action="auth-mode" data-mode="forgot">Passwort vergessen?</a>' : ''}
+    </div>
   </form></div>`;
   const f = $('authForm');
   f.addEventListener('submit', (e) => { e.preventDefault(); submitAuth(f); });
-  f.username.addEventListener('input', () => { f.username.value = f.username.value.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_.]/g, ''); });
+  f.username?.addEventListener('input', () => { f.username.value = f.username.value.toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_.]/g, ''); });
+}
+function renderCheckMail(email) {
+  $('root').innerHTML = `<div class="center"><div class="auth glass" style="text-align:center;align-items:center">
+    <span class="mail-ico">${ms('mark_email_unread', 'huge')}</span>
+    <h1>Bestätige deine E-Mail</h1>
+    <p class="sub">Wir haben einen Link an <b>${esc(email)}</b> geschickt. Tippe darauf, dann bist du direkt angemeldet.</p>
+    <p class="hint">Nichts angekommen? Schau auch im Spam-Ordner nach.</p>
+    <button class="btn sec" data-action="resend-mail" data-email="${esc(email)}">${ms('send')} E-Mail erneut senden</button>
+    <a data-action="auth-mode" data-mode="login">Zur Anmeldung</a></div></div>`;
 }
 async function submitAuth(f) {
   const mode = f.dataset.mode, btn = f.querySelector('button[type=submit]');
-  const username = f.username.value.trim().toLowerCase(), password = f.password.value;
-  if (!/^[a-z0-9_.]{2,32}$/.test(username)) return toast(`${ms('error')} Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt und Unterstrich.`, 'err');
-  if (password.length < 6) return toast(`${ms('error')} Das Passwort muss mindestens 6 Zeichen haben.`, 'err');
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  const label = btn.textContent;
+  const emailOk = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   try {
-    if (mode === 'login') {
-      const { data: email, error: e1 } = await sb.rpc('login_email', { u: username });
-      if (e1) throw e1;
-      if (!email) throw new Error('Benutzername oder Passwort ist falsch.');
-      const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw /Invalid login/i.test(error.message) ? new Error('Benutzername oder Passwort ist falsch.') : error;
-      LS.set('seenLogin', true);
-    } else {
+    if (mode === 'register') {
+      const email = f.email.value.trim().toLowerCase(), username = f.username.value.trim(), password = f.password.value;
+      if (!emailOk(email)) throw new Error('Bitte eine gültige E-Mail-Adresse eingeben.');
+      if (!/^[a-z0-9_.]{2,32}$/.test(username)) throw new Error('Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt und Unterstrich.');
+      if (password.length < 6) throw new Error('Das Passwort muss mindestens 6 Zeichen haben.');
       if (password !== f.password2.value) throw new Error('Die Passwörter stimmen nicht überein.');
       if (!f.terms.checked) throw new Error('Bitte bestätige die Hinweise.');
+      btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
       const { data: free, error: uErr } = await sb.rpc('username_available', { u: username });
       if (!uErr && free === false) throw new Error('Dieser Benutzername ist schon vergeben.');
-      const { data, error } = await sb.auth.signUp({ email: placeholderEmail(username), password, options: { data: { username, display_name: f.display.value.trim() || username } } });
+      const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username, display_name: f.display.value.trim() || username }, emailRedirectTo: appUrl() } });
       if (error) throw error;
       LS.set('seenLogin', true);
-      if (!data.session) return renderAuth('login', `${ms('info')} Konto erstellt, aber die Anmeldung ist noch gesperrt: In Supabase muss unter <b>Authentication → Sign In / Providers → Email</b> die Option <b>„Confirm email“</b> ausgeschaltet sein.`);
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) throw new Error('Für diese E-Mail gibt es schon ein Konto.');
+      if (!data.session) return renderCheckMail(email);
+    } else if (mode === 'login') {
+      const ident = f.ident.value.trim().replace(/^@/, ''), password = f.password.value;
+      if (!ident || !password) throw new Error('Bitte Benutzername/E-Mail und Passwort eingeben.');
+      btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+      let email = ident.toLowerCase();
+      if (!ident.includes('@')) {
+        const { data, error } = await sb.rpc('login_email', { u: email, pw: password });
+        if (error) throw error;
+        if (!data) throw new Error('Benutzername oder Passwort ist falsch.');
+        email = data;
+      }
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) {
+        if (/not confirmed/i.test(error.message)) return renderCheckMail(email.endsWith('@lumoapp.vercel.app') ? 'deine Adresse' : email);
+        throw /Invalid login/i.test(error.message) ? new Error('Benutzername/E-Mail oder Passwort ist falsch.') : error;
+      }
+      LS.set('seenLogin', true);
+    } else {
+      const email = f.email.value.trim().toLowerCase();
+      if (!emailOk(email)) throw new Error('Bitte eine gültige E-Mail-Adresse eingeben.');
+      btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
+      if (error) throw error;
+      return renderAuth('login', `${ms('mark_email_read')} Falls es ein Konto mit <b>${esc(email)}</b> gibt, ist jetzt ein Link zum Zurücksetzen unterwegs.`);
     }
-  } catch (e) { fail(e); btn.disabled = false; btn.textContent = mode === 'login' ? 'Anmelden' : 'Registrieren'; }
+  } catch (e) { fail(e); btn.disabled = false; btn.textContent = label; }
 }
 function renderRecovery() {
   $('root').innerHTML = `<div class="center"><form class="auth glass" id="recForm"><div class="brand"><img src="/icon-192.png" alt=""><div><h1>Neues Passwort</h1><p class="sub">Wähle ein neues Passwort für dein Konto.</p></div></div>
@@ -265,7 +272,7 @@ async function startApp() {
   } catch (e) {
     fail(e);
     $('root').innerHTML = `<div class="center"><div class="auth glass"><h1>Verbindung fehlgeschlagen</h1><p class="sub">${esc(germanError(e))}</p>
-      <button class="btn primary" data-action="reload">Erneut versuchen</button><button class="btn sec" data-action="logout">Abmelden</button>${CFG.fixed ? '' : '<a class="tiny-link" data-action="reset-cfg">Server-Verbindung ändern</a>'}</div></div>`;
+      <button class="btn primary" data-action="reload">Erneut versuchen</button><button class="btn sec" data-action="logout">Abmelden</button></div></div>`;
   } finally { st.starting = false; }
 }
 async function loadServers() {
@@ -1118,7 +1125,7 @@ async function acceptInvite(code) {
   const { data: sid, error } = await sb.rpc('join_server', { code }); if (error) return fail(error);
   await loadServers(); closeModal(); openTarget(sid, null); toast(`${ms('waving_hand')} Willkommen auf dem Server!`);
 }
-function inviteLink(s) { return `${appUrl()}#invite=${s.invite_code}${cfgHash() ? '&' + cfgHash() : ''}`; }
+function inviteLink(s) { return `${appUrl()}#invite=${s.invite_code}`; }
 function inviteModal() {
   const s = curServer(); if (!s) return;
   const link = inviteLink(s);
@@ -1224,10 +1231,10 @@ function settingsModal(tab = 'profile') {
       <label class="field"><span>Profilfarbe</span><input type="color" name="accent" value="${esc(me.accent)}"></label>
       <button class="btn primary">Speichern</button></form>`,
     account: `<div class="mform"><div class="kv"><small>Angemeldet als</small><b>@${esc(st.me.username)}</b></div>
+      <form id="mailForm" class="mform"><label class="field"><span>E-Mail-Adresse</span><input name="email" type="email" autocapitalize="off" value="${esc(/@lumoapp\.vercel\.app$/.test(st.session.user.email || '') ? '' : st.session.user.email || '')}" placeholder="name@beispiel.de"></label><button class="btn sec">${ms('mail')} E-Mail ändern</button></form>
       <form id="pwForm" class="mform"><label class="field"><span>Neues Passwort</span><input name="pw" type="password" minlength="6" autocomplete="new-password"></label><button class="btn sec">Passwort ändern</button></form>
       <button class="btn sec" data-action="logout">${ms('logout')} Abmelden</button>
-      ${CFG.fixed ? '' : `<button class="btn sec" data-action="copy" data-text="${esc(appUrl() + '#' + cfgHash())}">${ms('link')} App-Link mit Server-Verbindung kopieren</button>`}
-      <p class="dim small">Wenn du deinen Benutzernamen änderst, meldest du dich danach mit dem neuen Namen an.</p></div>`,
+      <p class="dim small">Anmelden geht mit Benutzername oder E-Mail.</p></div>`,
     look: `<div class="mform"><div class="seg3">${[['auto', 'Automatisch'], ['dark', 'Dunkel'], ['light', 'Hell']].map(([k, l]) => `<button class="${s.theme === k ? 'on' : ''}" data-action="set-theme" data-v="${k}">${l}</button>`).join('')}</div>
       <label class="opt"><span>Kompakte Nachrichten</span><span class="switch"><input type="checkbox" data-set="compact" ${s.compact ? 'checked' : ''}><span></span></span></label>
       <label class="field"><span>Schriftgröße: <b id="fsVal">${s.fontSize}px</b></span><input type="range" min="13" max="19" value="${s.fontSize}" data-set="fontSize"></label></div>`,
@@ -1243,6 +1250,13 @@ function settingsModal(tab = 'profile') {
     const u = f.username.value.trim().toLowerCase();
     if (!/^[a-z0-9_.]{2,32}$/.test(u)) return toast('Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt und Unterstrich.', 'err');
     if (await updateMe({ display_name: f.display_name.value.trim(), username: u, bio: f.bio.value.trim(), accent: f.accent.value })) toast(`${ms('check_circle')} Profil gespeichert`);
+  });
+  $('mailForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault(); const email = e.target.email.value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('Bitte eine gültige E-Mail-Adresse eingeben.', 'err');
+    const { error } = await sb.auth.updateUser({ email }, { emailRedirectTo: appUrl() });
+    if (error) return fail(error);
+    toast(`${ms('mark_email_read')} Bestätigungslink an ${esc(email)} gesendet`);
   });
   $('pwForm')?.addEventListener('submit', async (e) => { e.preventDefault(); const pw = e.target.pw.value; if (pw.length < 6) return toast('Mindestens 6 Zeichen.', 'err'); const { error } = await sb.auth.updateUser({ password: pw }); if (error) fail(error); else { toast(`${ms('check_circle')} Passwort geändert`); e.target.reset(); } });
 }
@@ -1307,15 +1321,12 @@ const A = {
   reload: () => location.reload(),
   'close-modal': closeModal, 'close-sheet': closeSheet,
   'auth-mode': ({ mode }) => renderAuth(mode),
-  'copy-sql': async () => { try { const sql = await (await fetch('/schema.sql')).text(); await navigator.clipboard.writeText(sql); toast(`${ms('check_circle')} Datenbank-Code kopiert – jetzt im SQL Editor einfügen`); } catch { window.open('/schema.sql', '_blank'); toast('Code in neuem Tab geöffnet – dort alles markieren und kopieren.'); } },
-  'save-cfg': () => {
-    const u = $('cfgUrl').value.trim().replace(/\/+$/, ''), k = $('cfgKey').value.trim();
-    if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(u) && !/^https:\/\//.test(u)) return renderSetup('Die Project URL beginnt mit https:// und endet meist auf .supabase.co');
-    if (k.length < 40) return renderSetup('Der anon public Key ist ein langer Text, der mit „eyJ“ oder „sb_publishable_“ beginnt.');
-    if (/service_role/.test(atobSafe(k.split('.')[1] || ''))) return renderSetup('Das ist der service_role-Schlüssel! Bitte den „anon public“ Schlüssel nehmen.');
-    LS.set('cfg', { u, k }); location.reload();
+  'resend-mail': async ({ email }, el) => {
+    el.disabled = true;
+    const { error } = await sb.auth.resend({ type: 'signup', email, options: { emailRedirectTo: appUrl() } });
+    if (error) { el.disabled = false; return fail(error); }
+    toast(`${ms('send')} E-Mail erneut gesendet`); setTimeout(() => (el.disabled = false), 30000);
   },
-  'reset-cfg': () => { LS.del('cfg'); location.reload(); },
   logout: async () => { closeModal(); await sb.auth.signOut(); },
   'go-home': () => openTarget('home', LS.get('lastHome', { kind: 'friends' })),
   'go-server': ({ id }) => { closeModal(); openTarget(id, null); },

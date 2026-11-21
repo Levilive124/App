@@ -8,7 +8,7 @@ Funktionen, die anderswo ein Abo kosten, sind hier **gratis**.
 
 | Bereich | Enthalten |
 |---|---|
-| Konto | Registrierung und Anmeldung nur mit **Benutzername + Passwort** (keine E-Mail, keine Bestätigung), Passwort ändern, Abmelden |
+| Konto | Registrierung mit Benutzername, E-Mail und Passwort, **automatische Bestätigungs-Mail**, Anmeldung mit Benutzername *oder* E-Mail, Passwort vergessen (per Mail), E-Mail/Passwort ändern, Abmelden |
 | Profil | Anzeigename, Benutzername, „Über mich“ (Markdown), Profilfarbe, **Profilbild & Banner (auch animierte GIFs)**, Status (Online/Abwesend/Bitte nicht stören/Unsichtbar), eigener Statustext |
 | Freunde | Anfragen senden/annehmen/ablehnen, Online-/Alle-/Ausstehend-Listen, Profilkarten mit gemeinsamen Servern |
 | Server | Erstellen (Name, Farbe, Bild), Einladungslinks & Codes (mit Vorschau), neuen Link erzeugen, Beitreten, Verlassen, Löschen |
@@ -29,19 +29,22 @@ Funktionen, die anderswo ein Abo kosten, sind hier **gratis**.
 3. **Project Settings → API**: *Project URL* und *anon public* Schlüssel notieren.
 
 ### 2. Website: Vercel (kostenlos)
-1. Auf [vercel.com](https://vercel.com/signup) mit GitHub anmelden → **Add New… → Project** → dieses Repository importieren.
-2. Bei **Environment Variables** eintragen:
-   - `VITE_SUPABASE_URL` = Project URL
-   - `VITE_SUPABASE_ANON_KEY` = anon public Schlüssel
-3. **Deploy** – fertig. Jeder neue Commit wird automatisch veröffentlicht.
+1. Auf [vercel.com](https://vercel.com/signup) mit GitHub anmelden → **Add New… → Project** → dieses Repository importieren → **Deploy**.
+2. Projekt-URL und öffentlicher Schlüssel (`sb_publishable_…`) sind in `src/main.js` fest hinterlegt.
+   Optional überschreibbar per Environment Variables `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (nur beim Bauen, nicht in der App).
 
-### 3. E-Mail-Bestätigung ausschalten
-**Authentication → Sign In / Providers → Email**: **„Confirm email“ ausschalten** → Save.
-Lumo nutzt nur Benutzername + Passwort; intern bekommt jedes Konto eine Platzhalter-Adresse
-(`…@lumoapp.vercel.app`), an die nie etwas gesendet wird.
+### 3. E-Mails (Bestätigung & Passwort vergessen)
+1. **Authentication → URL Configuration**: *Site URL* = deine Vercel-Adresse (z. B. `https://lumoapp-teal.vercel.app`).
+2. **Authentication → Sign In / Providers → Email**: **„Confirm email“ einschalten**.
+3. **Eigener Mail-Versand** (Supabase selbst schickt nur an Team-Mitglieder):
+   **Authentication → Emails → SMTP Settings** – z. B. mit einem Gmail-Konto:
+   Host `smtp.gmail.com`, Port `465`, Benutzer = Gmail-Adresse, Passwort = **App-Passwort**
+   (myaccount.google.com/apppasswords, braucht 2-Schritt-Bestätigung), Absendername `Lumo`.
+4. **Authentication → Emails → Templates**: Inhalte aus `supabase/emails/bestaetigung.html`
+   („Confirm signup“) und `supabase/emails/passwort.html` („Reset password“) einfügen.
 
-> Den **service_role**-Schlüssel niemals eintragen. Der anon-Schlüssel ist öffentlich; die Daten schützen die
-> Sicherheitsregeln (Row Level Security) im Schema.
+> Der öffentliche Schlüssel darf im Code stehen. Den **service_role / Secret key** niemals verwenden –
+> die Daten schützen die Sicherheitsregeln (Row Level Security) im Schema.
 
 ## Entwicklung
 ```bash

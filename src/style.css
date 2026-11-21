@@ -465,3 +465,5 @@ button.voice-user:hover { background: var(--hover); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } #bg i { animation: none; } }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { :root { --g-fill: var(--g-solid); --g-strong: var(--g-solid); } }
+
+.mail-ico .ms.huge { color: var(--accent-2); filter: drop-shadow(0 8px 20px color-mix(in srgb, var(--accent-2) 50%, transparent)); }

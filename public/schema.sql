@@ -193,12 +193,20 @@ language sql stable security definer set search_path = public as $$
   select not exists(select 1 from profiles where username = lower(trim(u)))
 $$;
 
--- log in with a username: returns the account's private placeholder e-mail (only that kind of address)
-create or replace function public.login_email(u text) returns text
-language sql stable security definer set search_path = public, auth as $$
-  select au.email from auth.users au join public.profiles p on p.id = au.id
-  where p.username = lower(trim(u)) and au.email like '%@lumoapp.vercel.app'
-$$;
+-- log in with a username: returns the account's e-mail ONLY when the password is correct,
+-- so nobody can look up someone else's address
+drop function if exists public.login_email(text);
+create or replace function public.login_email(u text, pw text) returns text
+language plpgsql security definer set search_path = public, extensions, auth as $$
+declare em text; hash text;
+begin
+  select au.email, au.encrypted_password into em, hash
+  from auth.users au join public.profiles p on p.id = au.id where p.username = lower(trim(u));
+  if em is null or hash is null or hash = '' then perform pg_sleep(0.3); return null; end if;
+  if crypt(pw, hash) = hash then return em; end if;
+  perform pg_sleep(0.3);
+  return null;
+end $$;
 
 -- preview a server before joining
 create or replace function public.invite_info(code text) returns table (id uuid, name text, icon_url text, color text, members bigint)
@@ -387,8 +395,7 @@ grant usage on schema public to authenticated;
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant execute on all functions in schema public to authenticated;
 grant execute on function public.username_available(text) to anon;
-grant execute on function public.login_email(text) to anon;
-revoke execute on function public.login_email(text) from public;
+grant execute on function public.login_email(text, text) to anon;
 
 -- ------------------------------------------------- username-only accounts
 -- Accounts use a placeholder e-mail on @lumoapp.vercel.app (no mailbox). They never need confirming:
